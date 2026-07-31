@@ -1,9 +1,12 @@
 import {
   arrayBufferToBase64,
-  isAdminRequest,
   json,
   postToGoogle,
 } from "@/app/lib/server";
+import {
+  portalErrorResponse,
+  requireApprovedPortalUser,
+} from "@/app/lib/users";
 
 export const dynamic = "force-dynamic";
 
@@ -16,11 +19,8 @@ const acceptedTypes = new Set([
 ]);
 
 export async function POST(request: Request) {
-  if (!isAdminRequest(request)) {
-    return json({ ok: false, error: "รหัสผู้ดูแลไม่ถูกต้อง" }, { status: 401 });
-  }
-
   try {
+    const { user } = await requireApprovedPortalUser();
     const form = await request.formData();
     const file = form.get("file");
     if (!(file instanceof File)) {
@@ -50,6 +50,7 @@ export async function POST(request: Request) {
         .filter(Boolean),
       altText: String(form.get("altText") ?? "").trim(),
       status: form.get("status") === "draft" ? "draft" : "published",
+      uploadedBy: user.email,
       file: {
         name: file.name,
         type: file.type,
@@ -71,12 +72,6 @@ export async function POST(request: Request) {
     }
     return json(result);
   } catch (error) {
-    return json(
-      {
-        ok: false,
-        error: error instanceof Error ? error.message : "บันทึกสื่อไม่สำเร็จ",
-      },
-      { status: 500 },
-    );
+    return portalErrorResponse(error);
   }
 }

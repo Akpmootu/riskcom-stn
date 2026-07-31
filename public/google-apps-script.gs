@@ -12,6 +12,8 @@ const WEBHOOK_SECRET = "CHANGE_ME_TO_A_LONG_RANDOM_SECRET";
 const FOLDER_NAME = "คลังสื่อสารความเสี่ยง สสจ.สตูล";
 const SPREADSHEET_NAME = "ฐานข้อมูลคลังสื่อสารความเสี่ยง สสจ.สตูล";
 const SHEET_NAME = "media";
+const USERS_SHEET_NAME = "users";
+const SUPER_ADMIN_EMAIL = "akaporn1234@gmail.com";
 const HEADERS = [
   "id",
   "title",
@@ -29,6 +31,26 @@ const HEADERS = [
   "fileType",
   "status",
   "createdAt",
+  "uploadedBy",
+];
+const USER_HEADERS = [
+  "id",
+  "email",
+  "firstName",
+  "lastName",
+  "position",
+  "workplace",
+  "phone",
+  "role",
+  "status",
+  "provider",
+  "providerAccountId",
+  "lineUserId",
+  "imageUrl",
+  "createdAt",
+  "updatedAt",
+  "approvedAt",
+  "approvedBy",
 ];
 
 function setupSatunRiskGallery() {
@@ -75,6 +97,21 @@ function doPost(event) {
       deleteMedia_(String(payload.id || ""));
       return jsonOutput_({ ok: true });
     }
+    if (payload.action === "getUser") {
+      return jsonOutput_({ ok: true, user: getUser_(payload) });
+    }
+    if (payload.action === "requestUser") {
+      return jsonOutput_({ ok: true, user: requestUser_(payload) });
+    }
+    if (payload.action === "updateProfile") {
+      return jsonOutput_({ ok: true, user: updateProfile_(payload) });
+    }
+    if (payload.action === "listUsers") {
+      return jsonOutput_({ ok: true, users: listUsers_() });
+    }
+    if (payload.action === "manageUser") {
+      return jsonOutput_({ ok: true, user: manageUser_(payload) });
+    }
     throw new Error("Unknown action");
   } catch (error) {
     return jsonOutput_({ ok: false, error: String(error && error.message ? error.message : error) });
@@ -112,10 +149,12 @@ function ensureResources_() {
 
   let sheet = spreadsheet.getSheetByName(SHEET_NAME);
   if (!sheet) sheet = spreadsheet.insertSheet(SHEET_NAME);
-  if (sheet.getLastRow() === 0) {
-    sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
-    sheet.setFrozenRows(1);
-  }
+  ensureSheetHeaders_(sheet, HEADERS);
+
+  let usersSheet = spreadsheet.getSheetByName(USERS_SHEET_NAME);
+  if (!usersSheet) usersSheet = spreadsheet.insertSheet(USERS_SHEET_NAME);
+  ensureSheetHeaders_(usersSheet, USER_HEADERS);
+  ensureSuperAdmin_(usersSheet);
 
   return {
     folderId: folderId,
@@ -181,6 +220,7 @@ function uploadMedia_(payload) {
     fileType: file.getMimeType(),
     status: payload.status === "draft" ? "draft" : "published",
     createdAt: now,
+    uploadedBy: String(payload.uploadedBy || ""),
   };
 
   const spreadsheet = SpreadsheetApp.openById(resources.spreadsheetId);
@@ -217,6 +257,355 @@ function deleteMedia_(id) {
     }
   }
   throw new Error("Media not found");
+}
+
+function ensureSheetHeaders_(sheet, requiredHeaders) {
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, requiredHeaders.length).setValues([requiredHeaders]);
+    sheet.setFrozenRows(1);
+    return;
+  }
+
+  const lastColumn = Math.max(sheet.getLastColumn(), 1);
+  const currentHeaders = sheet
+    .getRange(1, 1, 1, lastColumn)
+    .getValues()[0]
+    .map(String);
+  const missingHeaders = requiredHeaders.filter(function (header) {
+    return currentHeaders.indexOf(header) < 0;
+  });
+  if (missingHeaders.length) {
+    sheet
+      .getRange(1, currentHeaders.length + 1, 1, missingHeaders.length)
+      .setValues([missingHeaders]);
+  }
+  sheet.setFrozenRows(1);
+}
+
+function ensureSuperAdmin_(sheet) {
+  const state = getSheetState_(sheet);
+  const index = findUserIndex_(state.rows, SUPER_ADMIN_EMAIL, "");
+  const now = new Date().toISOString();
+
+  if (index < 0) {
+    const user = {
+      id: Utilities.getUuid(),
+      email: SUPER_ADMIN_EMAIL,
+      firstName: "Akaporn",
+      lastName: "ผู้ดูแลระบบ",
+      position: "Super Admin",
+      workplace: "สำนักงานสาธารณสุขจังหวัดสตูล",
+      phone: "",
+      role: "super_admin",
+      status: "approved",
+      provider: "google",
+      providerAccountId: "",
+      lineUserId: "",
+      imageUrl: "",
+      createdAt: now,
+      updatedAt: now,
+      approvedAt: now,
+      approvedBy: "system",
+    };
+    sheet.appendRow(objectToRow_(user, state.headers));
+    return user;
+  }
+
+  const user = rowToObject_(state.rows[index], state.headers);
+  let changed = false;
+  if (user.role !== "super_admin") {
+    user.role = "super_admin";
+    changed = true;
+  }
+  if (user.status !== "approved") {
+    user.status = "approved";
+    changed = true;
+  }
+  if (user.provider !== "google") {
+    user.provider = "google";
+    changed = true;
+  }
+  if (changed) {
+    user.updatedAt = now;
+    user.approvedAt = user.approvedAt || now;
+    user.approvedBy = user.approvedBy || "system";
+    writeUserAt_(sheet, index, state.headers, user);
+  }
+  return user;
+}
+
+function getUser_(payload) {
+  const resources = ensureResources_();
+  const spreadsheet = SpreadsheetApp.openById(resources.spreadsheetId);
+  const sheet = spreadsheet.getSheetByName(USERS_SHEET_NAME);
+  const email = normalizeEmail_(payload.email);
+  const providerAccountId = String(payload.providerAccountId || "");
+  const state = getSheetState_(sheet);
+  const index = findUserIndex_(state.rows, email, providerAccountId);
+  if (index < 0) return null;
+
+  const user = rowToObject_(state.rows[index], state.headers);
+  let changed = false;
+  if (email === SUPER_ADMIN_EMAIL) {
+    if (user.role !== "super_admin") {
+      user.role = "super_admin";
+      changed = true;
+    }
+    if (user.status !== "approved") {
+      user.status = "approved";
+      changed = true;
+    }
+  }
+  if (payload.provider === "google" && email && user.email === email) {
+    if (user.provider !== "google") {
+      user.provider = "google";
+      changed = true;
+    }
+    if (providerAccountId && user.providerAccountId !== providerAccountId) {
+      user.providerAccountId = providerAccountId;
+      changed = true;
+    }
+  }
+  const imageUrl = String(payload.imageUrl || "");
+  if (imageUrl && user.imageUrl !== imageUrl) {
+    user.imageUrl = imageUrl;
+    changed = true;
+  }
+  if (changed) {
+    user.updatedAt = new Date().toISOString();
+    writeUserAt_(sheet, index, state.headers, user);
+  }
+  return normalizeUser_(user);
+}
+
+function requestUser_(payload) {
+  const email = normalizeEmail_(payload.email);
+  const firstName = requiredText_(payload.firstName, "firstName");
+  const lastName = requiredText_(payload.lastName, "lastName");
+  const position = requiredText_(payload.position, "position");
+  const workplace = requiredText_(payload.workplace, "workplace");
+  const phone = requiredText_(payload.phone, "phone");
+  if (!isGmail_(email)) throw new Error("A valid Gmail address is required");
+
+  const resources = ensureResources_();
+  const spreadsheet = SpreadsheetApp.openById(resources.spreadsheetId);
+  const sheet = spreadsheet.getSheetByName(USERS_SHEET_NAME);
+  const state = getSheetState_(sheet);
+  const providerAccountId = String(payload.providerAccountId || "");
+  const provider = payload.provider === "line" ? "line" : "google";
+  const providerIndex = findUserIndex_(state.rows, "", providerAccountId);
+  const emailIndex = findUserIndex_(state.rows, email, "");
+  if (
+    provider === "line" &&
+    emailIndex >= 0 &&
+    emailIndex !== providerIndex
+  ) {
+    throw new Error("This Gmail address is already registered");
+  }
+  if (provider === "line" && email === SUPER_ADMIN_EMAIL) {
+    throw new Error("This Gmail address must sign in with Google");
+  }
+  const index = provider === "line"
+    ? providerIndex
+    : findUserIndex_(state.rows, email, providerAccountId);
+  const now = new Date().toISOString();
+  const existing =
+    index >= 0 ? rowToObject_(state.rows[index], state.headers) : {};
+  const isProtectedSuperAdmin = email === SUPER_ADMIN_EMAIL;
+  const user = {
+    id: existing.id || Utilities.getUuid(),
+    email: email,
+    firstName: firstName,
+    lastName: lastName,
+    position: position,
+    workplace: workplace,
+    phone: phone,
+    role: isProtectedSuperAdmin ? "super_admin" : existing.role || "uploader",
+    status: isProtectedSuperAdmin
+      ? "approved"
+      : existing.status === "approved"
+        ? "approved"
+        : "pending",
+    provider: provider,
+    providerAccountId: providerAccountId || existing.providerAccountId || "",
+    lineUserId:
+      provider === "line"
+        ? providerAccountId
+        : existing.lineUserId || "",
+    imageUrl: String(payload.imageUrl || existing.imageUrl || ""),
+    createdAt: existing.createdAt || now,
+    updatedAt: now,
+    approvedAt: isProtectedSuperAdmin
+      ? existing.approvedAt || now
+      : existing.approvedAt || "",
+    approvedBy: isProtectedSuperAdmin
+      ? existing.approvedBy || "system"
+      : existing.approvedBy || "",
+  };
+
+  if (index < 0) {
+    sheet.appendRow(objectToRow_(user, state.headers));
+  } else {
+    writeUserAt_(sheet, index, state.headers, user);
+  }
+  return normalizeUser_(user);
+}
+
+function updateProfile_(payload) {
+  const email = normalizeEmail_(payload.email);
+  const resources = ensureResources_();
+  const spreadsheet = SpreadsheetApp.openById(resources.spreadsheetId);
+  const sheet = spreadsheet.getSheetByName(USERS_SHEET_NAME);
+  const state = getSheetState_(sheet);
+  const index = findUserIndex_(
+    state.rows,
+    email,
+    String(payload.providerAccountId || ""),
+  );
+  if (index < 0) throw new Error("User not found");
+
+  const user = rowToObject_(state.rows[index], state.headers);
+  user.firstName = requiredText_(payload.firstName, "firstName");
+  user.lastName = requiredText_(payload.lastName, "lastName");
+  user.position = requiredText_(payload.position, "position");
+  user.workplace = requiredText_(payload.workplace, "workplace");
+  user.phone = requiredText_(payload.phone, "phone");
+  user.imageUrl = String(payload.imageUrl || user.imageUrl || "");
+  user.updatedAt = new Date().toISOString();
+  writeUserAt_(sheet, index, state.headers, user);
+  return normalizeUser_(user);
+}
+
+function listUsers_() {
+  const resources = ensureResources_();
+  const spreadsheet = SpreadsheetApp.openById(resources.spreadsheetId);
+  const sheet = spreadsheet.getSheetByName(USERS_SHEET_NAME);
+  const state = getSheetState_(sheet);
+  const order = { pending: 0, approved: 1, rejected: 2 };
+  return state.rows
+    .filter(function (row) {
+      return String(row[0] || "");
+    })
+    .map(function (row) {
+      return normalizeUser_(rowToObject_(row, state.headers));
+    })
+    .sort(function (a, b) {
+      const statusDifference =
+        (order[a.status] === undefined ? 9 : order[a.status]) -
+        (order[b.status] === undefined ? 9 : order[b.status]);
+      if (statusDifference) return statusDifference;
+      return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
+    });
+}
+
+function manageUser_(payload) {
+  const email = normalizeEmail_(payload.email);
+  if (!email || email === SUPER_ADMIN_EMAIL) {
+    throw new Error("This account cannot be modified");
+  }
+  const status = String(payload.status || "");
+  const role = String(payload.role || "");
+  if (["pending", "approved", "rejected"].indexOf(status) < 0) {
+    throw new Error("Invalid user status");
+  }
+  if (["admin", "uploader"].indexOf(role) < 0) {
+    throw new Error("Invalid user role");
+  }
+
+  const resources = ensureResources_();
+  const spreadsheet = SpreadsheetApp.openById(resources.spreadsheetId);
+  const sheet = spreadsheet.getSheetByName(USERS_SHEET_NAME);
+  const state = getSheetState_(sheet);
+  const index = findUserIndex_(state.rows, email, "");
+  if (index < 0) throw new Error("User not found");
+
+  const user = rowToObject_(state.rows[index], state.headers);
+  const now = new Date().toISOString();
+  user.status = status;
+  user.role = role;
+  user.updatedAt = now;
+  if (status === "approved") {
+    user.approvedAt = now;
+    user.approvedBy = String(payload.approvedBy || "");
+  }
+  writeUserAt_(sheet, index, state.headers, user);
+  return normalizeUser_(user);
+}
+
+function getSheetState_(sheet) {
+  const values = sheet.getDataRange().getValues();
+  return {
+    headers: (values[0] || USER_HEADERS).map(String),
+    rows: values.slice(1),
+  };
+}
+
+function findUserIndex_(rows, email, providerAccountId) {
+  const emailColumn = USER_HEADERS.indexOf("email");
+  const providerColumn = USER_HEADERS.indexOf("providerAccountId");
+  for (let index = 0; index < rows.length; index += 1) {
+    const rowEmail = normalizeEmail_(rows[index][emailColumn]);
+    const rowProviderAccountId = String(rows[index][providerColumn] || "");
+    if (
+      (email && rowEmail === email) ||
+      (providerAccountId && rowProviderAccountId === providerAccountId)
+    ) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function rowToObject_(row, headers) {
+  const item = {};
+  headers.forEach(function (header, index) {
+    item[header] = row[index];
+  });
+  return item;
+}
+
+function objectToRow_(item, headers) {
+  return headers.map(function (header) {
+    return item[header] || "";
+  });
+}
+
+function writeUserAt_(sheet, rowIndex, headers, user) {
+  sheet
+    .getRange(rowIndex + 2, 1, 1, headers.length)
+    .setValues([objectToRow_(user, headers)]);
+}
+
+function normalizeUser_(user) {
+  const normalized = {};
+  USER_HEADERS.forEach(function (header) {
+    normalized[header] = String(user[header] || "");
+  });
+  normalized.email = normalizeEmail_(normalized.email);
+  normalized.role =
+    ["super_admin", "admin", "uploader"].indexOf(normalized.role) >= 0
+      ? normalized.role
+      : "uploader";
+  normalized.status =
+    ["pending", "approved", "rejected"].indexOf(normalized.status) >= 0
+      ? normalized.status
+      : "pending";
+  normalized.provider = normalized.provider === "line" ? "line" : "google";
+  return normalized;
+}
+
+function normalizeEmail_(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isGmail_(email) {
+  return /^[a-z0-9._%+-]+@gmail\.com$/.test(email);
+}
+
+function requiredText_(value, fieldName) {
+  const text = String(value || "").trim();
+  if (!text) throw new Error("Missing " + fieldName);
+  return text;
 }
 
 function jsonOutput_(payload) {
