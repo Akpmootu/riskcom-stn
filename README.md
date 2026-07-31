@@ -1,8 +1,7 @@
-# vinext-starter
+# คลังสื่อสารความเสี่ยง จังหวัดสตูล
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+เว็บไซต์รวบรวมและเผยแพร่สื่อความเสี่ยงของสำนักงานสาธารณสุขจังหวัดสตูล
+รองรับการเผยแพร่บน Vercel ด้วย Next.js และบน OpenAI Sites ด้วย vinext
 
 ## Prerequisites
 
@@ -16,7 +15,14 @@ npm run dev
 npm run build
 ```
 
-This starter does not use `wrangler.jsonc`.
+คำสั่งมาตรฐานด้านบนใช้ Next.js และสร้างโฟลเดอร์ `.next` สำหรับ Vercel
+
+สำหรับ OpenAI Sites ใช้คำสั่งต่อไปนี้:
+
+```bash
+npm run dev:sites
+npm run build:sites
+```
 
 ## Included Shape
 
