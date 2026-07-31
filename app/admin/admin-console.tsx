@@ -17,12 +17,12 @@ import {
   LockKeyhole,
   LogOut,
   RefreshCw,
-  Sheet,
   ShieldCheck,
   Trash2,
   Upload,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import type { MediaItem, MediaResponse } from "../types";
 
@@ -153,7 +153,7 @@ export function AdminConsole() {
           <span><strong>คลังสื่อสารความเสี่ยง</strong><small>สำนักงานสาธารณสุขจังหวัดสตูล</small></span>
         </div>
         <div className="login-shell">
-          <a href="/" className="back-home"><ArrowLeft size={17} /> กลับหน้าคลังสื่อ</a>
+          <Link href="/" className="back-home"><ArrowLeft size={17} /> กลับหน้าคลังสื่อ</Link>
           <section className="login-card">
             <span className="login-icon"><LockKeyhole size={28} /></span>
             <span className="section-kicker">ADMIN PORTAL</span>
@@ -190,10 +190,10 @@ export function AdminConsole() {
     <main className="admin-page">
       <header className="admin-header">
         <div className="container admin-nav">
-          <a className="brand" href="/">
+          <Link className="brand" href="/">
             <span className="brand-mark"><HeartPulse size={24} /></span>
             <span><strong>ระบบจัดการสื่อ</strong><small>สำนักงานสาธารณสุขจังหวัดสตูล</small></span>
-          </a>
+          </Link>
           <div className="admin-nav-actions">
             <a href="/" target="_blank"><Eye size={17} /> ดูหน้าเว็บไซต์</a>
             <button type="button" onClick={() => { setActiveKey(""); setStatus(null); setAccessKey(""); }}>
