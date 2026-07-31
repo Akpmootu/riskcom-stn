@@ -17,10 +17,30 @@ export type MediaItem = {
   fileType: string;
   status: "published" | "draft";
   createdAt: string;
+  uploadedBy?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+  revisionCount?: number;
 };
 
 export type MediaResponse = {
   items: MediaItem[];
   source: "google" | "demo";
   message?: string;
+};
+
+export type MediaRevision = {
+  id: string;
+  mediaId: string;
+  editedAt: string;
+  editedBy: string;
+  changedFields: string[];
+  before: Partial<MediaItem>;
+  after: Partial<MediaItem>;
+};
+
+export type VisitorStats = {
+  totalViews: number;
+  todayViews: number;
+  updatedAt: string;
 };

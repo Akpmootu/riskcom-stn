@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
-import { access, readFile, readdir } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import test from "node:test";
-
-const developmentPreviewMeta =
-  /<meta(?=[^>]*\bname=["']codex-preview["'])(?=[^>]*\bcontent=["']development["'])[^>]*>/i;
-const templateRoot = new URL("../", import.meta.url);
-const previewRoot = new URL("../app/_sites-preview/", import.meta.url);
 
 async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -28,64 +23,65 @@ async function render() {
   );
 }
 
-test("server-renders the starter loading skeleton", async () => {
+test("server-renders the Satun risk communication gallery", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, developmentPreviewMeta);
-  assert.match(html, /<title>Your site is taking shape<\/title>/i);
-  assert.match(html, /Building your site/);
-  assert.match(html, /Your site is taking shape/);
+  assert.match(html, /<title>คลังสื่อสารความเสี่ยง จังหวัดสตูล<\/title>/);
+  assert.match(html, /รู้ก่อน เตรียมพร้อม/);
+  assert.match(html, /src="\/satun-risk-logo\.png"/);
+  assert.match(html, /class="mobile-bottom-nav"/);
   assert.match(
     html,
-    /Your first version will appear here automatically when it’s ready\./,
+    /จัดทำโดย นายอรรฆพร ศรีปานรอด นักวิชาการคอมพิวเตอร์ปฏิบัติการ/,
   );
-  assert.doesNotMatch(html, /Codex/);
-  assert.match(html, /react-loading-skeleton/);
-  assert.match(html, /role="status"/);
+  assert.match(
+    html,
+    /กลุ่มงานสุขภาพดิจิทัล สำนักงานสาธารณสุขจังหวัดสตูล/,
+  );
+  assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
 
-test("keeps the loading skeleton scoped and disposable", async () => {
-  const [preview, css, page, layout, packageJson, files] = await Promise.all([
-    readFile(new URL("SkeletonPreview.tsx", previewRoot), "utf8"),
-    readFile(new URL("preview.css", previewRoot), "utf8"),
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../package.json", import.meta.url), "utf8"),
-    readdir(previewRoot),
+test("includes mobile, fullscreen, edit-history, analytics, and brand assets", async () => {
+  const [
+    gallery,
+    adminConsole,
+    css,
+    appsScript,
+    publicAppsScript,
+  ] = await Promise.all([
+    readFile(new URL("../app/media-gallery.tsx", import.meta.url), "utf8"),
+    readFile(
+      new URL("../app/admin/admin-console.tsx", import.meta.url),
+      "utf8",
+    ),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+    readFile(
+      new URL("../integrations/google-apps-script/Code.gs", import.meta.url),
+      "utf8",
+    ),
+    readFile(new URL("../public/google-apps-script.gs", import.meta.url), "utf8"),
   ]);
 
-  assert.deepEqual(files.sort(), ["SkeletonPreview.tsx", "preview.css"]);
-  assert.match(preview, /from "react-loading-skeleton"/);
-  assert.match(preview, /baseColor="#eceae7"/);
-  assert.match(preview, /highlightColor="#f9f8f6"/);
-  assert.match(preview, /duration=\{2\.8\}/);
-  assert.match(preview, /sites-skeleton-search-placeholder/);
-  assert.match(packageJson, /"react-loading-skeleton": "3\.5\.0"/);
+  assert.match(gallery, /className="mobile-bottom-nav"/);
+  assert.match(gallery, /className="fullscreen-viewer"/);
+  assert.match(gallery, /\/api\/analytics\/view/);
+  assert.match(adminConsole, /\/api\/admin\/media/);
+  assert.match(adminConsole, /\/api\/admin\/history/);
+  assert.match(css, /env\(safe-area-inset-bottom\)/);
+  assert.match(css, /\.admin-edit-modal/);
+  assert.match(appsScript, /MEDIA_HISTORY_SHEET_NAME = "media_edit_logs"/);
+  assert.match(appsScript, /SITE_STATS_SHEET_NAME = "site_stats"/);
+  assert.match(appsScript, /function updateMedia_/);
+  assert.match(appsScript, /function trackVisitorView_/);
+  assert.equal(publicAppsScript, appsScript);
 
-  const shellIndex = preview.indexOf('className="sites-skeleton-shell"');
-  const statusIndex = preview.indexOf('className="sites-skeleton-status"');
-  assert.ok(shellIndex >= 0 && statusIndex > shellIndex);
-  assert.match(css, /position:\s*fixed/);
-  assert.match(css, /inset:\s*0/);
-  assert.match(css, /opacity:\s*0\.52/);
-  assert.match(css, /prefers-reduced-motion:\s*reduce/);
-  assert.doesNotMatch(css, /#020617|canvas|pets|progress/i);
-  assert.doesNotMatch(
-    preview,
-    /loading-spinner|status-mark|status-progress|canvas|cookie|random/i,
-  );
-
-  assert.match(page, /export const metadata:\s*Metadata/);
-  assert.match(page, /"codex-preview": "development"/);
-  assert.match(page, /<SkeletonPreview \/>/);
-  assert.match(layout, /title:\s*"Starter Project"/);
-  assert.doesNotMatch(layout, /codex-preview|_sites-preview|themeColor|\bViewport\b/);
-  assert.doesNotMatch(css, /(^|\s)(html|body)\s*\{/m);
-
-  await assert.rejects(
-    access(new URL("public/_sites-preview", templateRoot)),
-  );
+  await Promise.all([
+    access(new URL("../app/icon.png", import.meta.url)),
+    access(new URL("../app/apple-icon.png", import.meta.url)),
+    access(new URL("../app/favicon.ico", import.meta.url)),
+    access(new URL("../public/satun-risk-logo.png", import.meta.url)),
+  ]);
 });

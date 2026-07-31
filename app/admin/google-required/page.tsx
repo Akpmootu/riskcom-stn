@@ -1,9 +1,4 @@
-import {
-  HeartPulse,
-  LogIn,
-  Mail,
-  ShieldCheck,
-} from "lucide-react";
+import { LogIn, Mail, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { authProviderAvailability, signIn } from "@/auth";
@@ -24,7 +19,7 @@ export default async function GoogleRequiredPage() {
       <header className="member-header">
         <Link href="/" className="brand">
           <span className="brand-mark">
-            <HeartPulse size={24} />
+            <img src="/satun-risk-logo.png" alt="" aria-hidden="true" />
           </span>
           <span>
             <strong>ยืนยันบัญชี Gmail</strong>

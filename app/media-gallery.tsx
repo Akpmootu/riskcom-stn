@@ -12,17 +12,25 @@ import {
   Eye,
   FileText,
   HeartPulse,
+  Home,
   Image as ImageIcon,
   MapPin,
+  Maximize2,
   Menu,
   Search,
   Share2,
   ShieldCheck,
   Sparkles,
+  UserRound,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { IncidentPhase, MediaItem, MediaResponse } from "./types";
+import type {
+  IncidentPhase,
+  MediaItem,
+  MediaResponse,
+  VisitorStats,
+} from "./types";
 
 const phases: Array<{
   id: IncidentPhase;
@@ -121,6 +129,8 @@ export function MediaGallery() {
   const [toast, setToast] = useState("");
   const [loading, setLoading] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [visitorStats, setVisitorStats] = useState<VisitorStats | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -131,6 +141,13 @@ export function MediaGallery() {
         setItems(result.items);
         setSource(result.source);
         setSourceMessage(result.message ?? "");
+        const requestedId = new URLSearchParams(window.location.search).get(
+          "media",
+        );
+        const requestedItem = result.items.find(
+          (item) => item.id === requestedId,
+        );
+        if (requestedItem) setSelected(requestedItem);
       })
       .catch(() => {
         if (active) setSourceMessage("ไม่สามารถโหลดข้อมูลได้ กรุณาลองใหม่อีกครั้ง");
@@ -138,6 +155,51 @@ export function MediaGallery() {
       .finally(() => {
         if (active) setLoading(false);
       });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    async function updateVisitorCount() {
+      let token = "";
+      let alreadyCounted = false;
+      try {
+        token =
+          window.sessionStorage.getItem("satun-risk-session") ||
+          window.crypto.randomUUID();
+        alreadyCounted =
+          window.sessionStorage.getItem("satun-risk-view-counted") === "yes";
+        window.sessionStorage.setItem("satun-risk-session", token);
+      } catch {
+        token = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      }
+
+      const response = await fetch(
+        alreadyCounted ? "/api/analytics/stats" : "/api/analytics/view",
+        alreadyCounted
+          ? { cache: "no-store" }
+          : {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ sessionToken: token }),
+            },
+      );
+      const result = (await response.json()) as {
+        stats?: VisitorStats;
+      };
+      if (active && result.stats) setVisitorStats(result.stats);
+      if (!alreadyCounted) {
+        try {
+          window.sessionStorage.setItem("satun-risk-view-counted", "yes");
+        } catch {
+          // Private browsing may disable session storage.
+        }
+      }
+    }
+
+    void updateVisitorCount().catch(() => undefined);
     return () => {
       active = false;
     };
@@ -152,10 +214,21 @@ export function MediaGallery() {
   useEffect(() => {
     if (!selected) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelected(null);
+      if (event.key !== "Escape") return;
+      if (fullscreen) setFullscreen(false);
+      else setSelected(null);
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [fullscreen, selected]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
   }, [selected]);
 
   const categories = useMemo(
@@ -206,7 +279,7 @@ export function MediaGallery() {
   }
 
   return (
-    <main className="site-shell">
+    <main className="site-shell" id="top">
       <div className="top-ribbon">
         <div className="container ribbon-inner">
           <span><HeartPulse size={15} /> ศูนย์สื่อสารความเสี่ยงด้านสุขภาพ จังหวัดสตูล</span>
@@ -217,7 +290,9 @@ export function MediaGallery() {
       <header className="site-header">
         <div className="container nav-wrap">
           <a className="brand" href="#" aria-label="กลับไปหน้าแรก">
-            <span className="brand-mark"><HeartPulse size={25} /></span>
+            <span className="brand-mark">
+              <img src="/satun-risk-logo.png" alt="" aria-hidden="true" />
+            </span>
             <span>
               <strong>คลังสื่อสารความเสี่ยง</strong>
               <small>สำนักงานสาธารณสุขจังหวัดสตูล</small>
@@ -471,13 +546,31 @@ export function MediaGallery() {
       <footer className="site-footer">
         <div className="container footer-grid">
           <div className="footer-brand">
-            <span className="brand-mark"><HeartPulse size={23} /></span>
+            <span className="brand-mark">
+              <img src="/satun-risk-logo.png" alt="" aria-hidden="true" />
+            </span>
             <div><strong>คลังสื่อสารความเสี่ยง</strong><small>สำนักงานสาธารณสุขจังหวัดสตูล</small></div>
           </div>
-          <p>ข้อมูลสาธารณะเพื่อการเตรียมพร้อม รับมือ และฟื้นฟูชุมชนอย่างปลอดภัย</p>
-          <a href="/admin">เข้าสู่ระบบผู้ดูแล <ArrowRight size={15} /></a>
+          <div className="footer-credit">
+            <p>จัดทำโดย นายอรรฆพร ศรีปานรอด นักวิชาการคอมพิวเตอร์ปฏิบัติการ</p>
+            <p>กลุ่มงานสุขภาพดิจิทัล สำนักงานสาธารณสุขจังหวัดสตูล</p>
+          </div>
+          <div className="footer-actions">
+            <span className="visitor-counter" title="นับหนึ่งครั้งต่อการเข้าใช้งานในแต่ละรอบ">
+              <Eye size={15} />
+              ผู้เข้าชม {visitorStats?.totalViews.toLocaleString("th-TH") ?? "—"} ครั้ง
+            </span>
+            <a href="/admin">เข้าสู่ระบบผู้ดูแล <ArrowRight size={15} /></a>
+          </div>
         </div>
       </footer>
+
+      <nav className="mobile-bottom-nav" aria-label="เมนูทางลัด">
+        <a href="#top"><Home size={20} /><span>หน้าแรก</span></a>
+        <a href="#phases"><ShieldCheck size={20} /><span>ช่วงเหตุ</span></a>
+        <a href="#gallery"><ImageIcon size={20} /><span>คลังสื่อ</span></a>
+        <a href="/admin"><UserRound size={20} /><span>ผู้ดูแล</span></a>
+      </nav>
 
       {selected && (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setSelected(null)}>
@@ -491,7 +584,17 @@ export function MediaGallery() {
             <button className="modal-close" type="button" aria-label="ปิด" onClick={() => setSelected(null)}>
               <X size={20} />
             </button>
-            <div className="detail-visual"><MediaArtwork item={selected} large /></div>
+            <button
+              className="detail-visual"
+              type="button"
+              onClick={() => setFullscreen(true)}
+              aria-label={`ดูภาพ ${selected.title} แบบเต็มหน้าจอ`}
+            >
+              <MediaArtwork item={selected} large />
+              <span className="fullscreen-hint">
+                <Maximize2 size={17} /> ดูเต็มหน้าจอ
+              </span>
+            </button>
             <div className="detail-copy">
               <div className="detail-badges">
                 <span className={`phase-badge badge-${selected.phase}`}>{phaseLabels[selected.phase]}</span>
@@ -522,6 +625,32 @@ export function MediaGallery() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {selected && fullscreen && (
+        <div
+          className="fullscreen-viewer"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`ภาพเต็มหน้าจอ ${selected.title}`}
+          onMouseDown={() => setFullscreen(false)}
+        >
+          <button
+            className="fullscreen-close"
+            type="button"
+            aria-label="ปิดภาพเต็มหน้าจอ"
+            onClick={() => setFullscreen(false)}
+          >
+            <X size={23} />
+          </button>
+          <div
+            className="fullscreen-stage"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <MediaArtwork item={selected} large />
+          </div>
+          <div className="fullscreen-caption">{selected.title}</div>
         </div>
       )}
 

@@ -1,6 +1,5 @@
 import {
   ArrowLeft,
-  HeartPulse,
   LockKeyhole,
   Mail,
   MessageCircle,
@@ -19,7 +18,7 @@ export default async function AdminLoginPage() {
   return (
     <main className="admin-login-page oauth-login-page">
       <div className="admin-login-brand">
-        <span className="brand-mark"><HeartPulse size={25} /></span>
+        <span className="brand-mark"><img src="/satun-risk-logo.png" alt="" aria-hidden="true" /></span>
         <span>
           <strong>คลังสื่อสารความเสี่ยง</strong>
           <small>สำนักงานสาธารณสุขจังหวัดสตูล</small>

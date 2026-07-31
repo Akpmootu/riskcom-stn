@@ -1,4 +1,4 @@
-import { Clock3, HeartPulse, ShieldAlert } from "lucide-react";
+import { Clock3, ShieldAlert } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getPortalContext } from "@/app/lib/users";
@@ -18,7 +18,7 @@ export default async function PendingApprovalPage() {
     <main className="member-page">
       <header className="member-header">
         <Link href="/" className="brand">
-          <span className="brand-mark"><HeartPulse size={24} /></span>
+          <span className="brand-mark"><img src="/satun-risk-logo.png" alt="" aria-hidden="true" /></span>
           <span>
             <strong>สถานะคำขอใช้งาน</strong>
             <small>คลังสื่อสารความเสี่ยง จังหวัดสตูล</small>

@@ -9,12 +9,14 @@ import {
   FileImage,
   FileText,
   FolderCheck,
-  HeartPulse,
+  History,
   Link2,
   LoaderCircle,
   LockKeyhole,
   LogOut,
+  Pencil,
   RefreshCw,
+  Save,
   ShieldCheck,
   Trash2,
   Upload,
@@ -24,7 +26,7 @@ import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { isManagerRole, type PortalUser } from "../auth-types";
-import type { MediaItem, MediaResponse } from "../types";
+import type { MediaItem, MediaResponse, MediaRevision } from "../types";
 
 type ConnectionStatus = {
   ok: boolean;
@@ -33,6 +35,29 @@ type ConnectionStatus = {
   folderName?: string;
   sheetName?: string;
 };
+
+const changedFieldLabels: Record<string, string> = {
+  title: "ชื่อสื่อ",
+  description: "คำอธิบาย",
+  phase: "ช่วงเหตุการณ์",
+  category: "ประเภทเหตุการณ์",
+  eventDate: "วันที่เหตุการณ์",
+  location: "พื้นที่",
+  keywords: "คำค้นหา",
+  altText: "คำบรรยายภาพ",
+  status: "สถานะ",
+};
+
+function formatThaiDateTime(value: string) {
+  if (!value) return "ไม่ระบุเวลา";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("th-TH", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Bangkok",
+  }).format(date);
+}
 
 export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
@@ -44,6 +69,11 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [uploading, setUploading] = useState(false);
   const [formMessage, setFormMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState<MediaItem | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [historyItem, setHistoryItem] = useState<MediaItem | null>(null);
+  const [historyEntries, setHistoryEntries] = useState<MediaRevision[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -58,8 +88,13 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   }, [previewUrl]);
 
   async function loadItems() {
-    const response = await fetch("/api/media", { cache: "no-store" });
-    const result = (await response.json()) as MediaResponse;
+    const response = await fetch("/api/admin/media", { cache: "no-store" });
+    const result = (await response.json()) as MediaResponse & {
+      error?: string;
+    };
+    if (!response.ok) {
+      throw new Error(result.error || "โหลดรายการสื่อไม่สำเร็จ");
+    }
     setItems(result.items);
     setSource(result.source);
   }
@@ -134,6 +169,94 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     setItems((current) => current.filter((entry) => entry.id !== item.id));
   }
 
+  async function handleEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editing || !status?.connected) return;
+    const data = new FormData(event.currentTarget);
+    setSavingEdit(true);
+    setFormMessage(null);
+    try {
+      const response = await fetch("/api/admin/media", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id: editing.id,
+          title: String(data.get("title") || ""),
+          description: String(data.get("description") || ""),
+          phase: String(data.get("phase") || "before"),
+          category: String(data.get("category") || ""),
+          eventDate: String(data.get("eventDate") || ""),
+          location: String(data.get("location") || ""),
+          keywords: String(data.get("keywords") || "")
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean),
+          altText: String(data.get("altText") || ""),
+          status: String(data.get("status") || "published"),
+        }),
+      });
+      const result = (await response.json()) as {
+        ok?: boolean;
+        item?: MediaItem;
+        error?: string;
+      };
+      if (!response.ok || !result.ok || !result.item) {
+        throw new Error(result.error || "แก้ไขข้อมูลสื่อไม่สำเร็จ");
+      }
+      setItems((current) =>
+        current.map((item) =>
+          item.id === result.item?.id ? result.item : item,
+        ),
+      );
+      setEditing(null);
+      setFormMessage({
+        type: "success",
+        text: "บันทึกข้อมูลและประวัติการแก้ไขเรียบร้อยแล้ว",
+      });
+    } catch (error) {
+      setFormMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "แก้ไขข้อมูลสื่อไม่สำเร็จ",
+      });
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function openHistory(item: MediaItem) {
+    setHistoryItem(item);
+    setHistoryEntries([]);
+    setHistoryLoading(true);
+    try {
+      const response = await fetch(
+        `/api/admin/history?mediaId=${encodeURIComponent(item.id)}`,
+        { cache: "no-store" },
+      );
+      const result = (await response.json()) as {
+        history?: MediaRevision[];
+        error?: string;
+      };
+      if (!response.ok || !Array.isArray(result.history)) {
+        throw new Error(result.error || "โหลดประวัติการแก้ไขไม่สำเร็จ");
+      }
+      setHistoryEntries(result.history);
+    } catch (error) {
+      setFormMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? error.message
+            : "โหลดประวัติการแก้ไขไม่สำเร็จ",
+      });
+      setHistoryItem(null);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
   async function copySecretHint() {
     await navigator.clipboard.writeText("สร้างข้อความสุ่มยาวอย่างน้อย 32 ตัวอักษร แล้วใช้ค่าเดียวกันทั้งสองฝั่ง");
     setCopied(true);
@@ -145,7 +268,9 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       <header className="admin-header">
         <div className="container admin-nav">
           <Link className="brand" href="/">
-            <span className="brand-mark"><HeartPulse size={24} /></span>
+            <span className="brand-mark">
+              <img src="/satun-risk-logo.png" alt="" aria-hidden="true" />
+            </span>
             <span><strong>ระบบจัดการสื่อ</strong><small>สำนักงานสาธารณสุขจังหวัดสตูล</small></span>
           </Link>
           <div className="admin-nav-actions">
@@ -289,19 +414,111 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
               {source === "demo" && <span className="demo-label">ข้อมูลตัวอย่าง</span>}
             </div>
             <div className="manager-list">
-              {items.slice(0, 8).map((item) => (
+              {items.map((item) => (
                 <article key={item.id}>
                   <span className={`manager-thumb thumb-${item.phase}`}>{item.fileType.includes("pdf") ? <FileText size={20} /> : <FileImage size={20} />}</span>
-                  <div><strong>{item.title}</strong><small>{item.category} • {item.location}</small><em>{item.status === "published" ? "เผยแพร่แล้ว" : "ฉบับร่าง"}</em></div>
-                  {isManagerRole(currentUser.role) && (
-                    <button type="button" disabled={!status?.connected || source === "demo"} onClick={() => void deleteItem(item)} aria-label={`ลบ ${item.title}`}><Trash2 size={16} /></button>
-                  )}
+                  <div>
+                    <strong>{item.title}</strong>
+                    <small>{item.category} • {item.location}</small>
+                    <em>
+                      {item.status === "published" ? "เผยแพร่แล้ว" : "ฉบับร่าง"}
+                      {item.revisionCount ? ` • แก้ไข ${item.revisionCount} ครั้ง` : ""}
+                    </em>
+                  </div>
+                  <div className="manager-actions">
+                    <button type="button" disabled={!status?.connected || source === "demo"} onClick={() => setEditing(item)} aria-label={`แก้ไข ${item.title}`} title="แก้ไขข้อมูล"><Pencil size={15} /></button>
+                    <button type="button" disabled={!status?.connected || source === "demo"} onClick={() => void openHistory(item)} aria-label={`ดูประวัติ ${item.title}`} title="ประวัติการแก้ไข"><History size={15} /></button>
+                    {isManagerRole(currentUser.role) && (
+                      <button className="delete-action" type="button" disabled={!status?.connected || source === "demo"} onClick={() => void deleteItem(item)} aria-label={`ลบ ${item.title}`} title="ลบรายการ"><Trash2 size={15} /></button>
+                    )}
+                  </div>
                 </article>
               ))}
             </div>
           </aside>
         </div>
       </div>
+
+      {editing && (
+        <div className="admin-modal-backdrop" onMouseDown={() => !savingEdit && setEditing(null)}>
+          <section className="admin-edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-media-title" onMouseDown={(event) => event.stopPropagation()}>
+            <header>
+              <div>
+                <span className="panel-icon"><Pencil size={19} /></span>
+                <span><h2 id="edit-media-title">แก้ไขข้อมูลสื่อ</h2><p>ระบบจะเก็บผู้แก้ไข เวลา และรายการข้อมูลที่เปลี่ยน</p></span>
+              </div>
+              <button type="button" onClick={() => setEditing(null)} disabled={savingEdit} aria-label="ปิดหน้าต่างแก้ไข"><X size={19} /></button>
+            </header>
+            <form onSubmit={handleEdit}>
+              <div className="form-grid">
+                <label className="field-wide">ชื่อสื่อ <em>*</em><input name="title" required defaultValue={editing.title} /></label>
+                <label>ช่วงเหตุการณ์ <em>*</em>
+                  <select name="phase" defaultValue={editing.phase}>
+                    <option value="before">ก่อนเกิดเหตุ</option>
+                    <option value="during">ระหว่างเกิดเหตุ</option>
+                    <option value="after">หลังเกิดเหตุ</option>
+                  </select>
+                </label>
+                <label>ประเภทเหตุการณ์ <em>*</em><input name="category" required defaultValue={editing.category} /></label>
+                <label>วันที่เหตุการณ์ <em>*</em><input type="date" name="eventDate" required defaultValue={editing.eventDate} /></label>
+                <label>พื้นที่ <em>*</em><input name="location" required defaultValue={editing.location} /></label>
+                <label className="field-wide">คำอธิบาย <em>*</em><textarea name="description" rows={4} required defaultValue={editing.description} /></label>
+                <label className="field-wide">คำบรรยายภาพเพื่อการเข้าถึง <em>*</em><input name="altText" required defaultValue={editing.altText} /></label>
+                <label className="field-wide">คำค้นหา <span>(คั่นด้วยเครื่องหมายจุลภาค)</span><input name="keywords" defaultValue={editing.keywords.join(", ")} /></label>
+                <label>สถานะ
+                  <select name="status" defaultValue={editing.status}>
+                    <option value="published">เผยแพร่</option>
+                    <option value="draft">ฉบับร่าง</option>
+                  </select>
+                </label>
+              </div>
+              <div className="admin-modal-actions">
+                <button type="button" onClick={() => setEditing(null)} disabled={savingEdit}>ยกเลิก</button>
+                <button className="admin-primary" type="submit" disabled={savingEdit}>
+                  {savingEdit ? <LoaderCircle className="spin" size={17} /> : <Save size={17} />}
+                  {savingEdit ? "กำลังบันทึก..." : "บันทึกการแก้ไข"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {historyItem && (
+        <div className="admin-modal-backdrop" onMouseDown={() => setHistoryItem(null)}>
+          <section className="admin-history-modal" role="dialog" aria-modal="true" aria-labelledby="media-history-title" onMouseDown={(event) => event.stopPropagation()}>
+            <header>
+              <div>
+                <span className="panel-icon"><History size={19} /></span>
+                <span><h2 id="media-history-title">ประวัติการแก้ไข</h2><p>{historyItem.title}</p></span>
+              </div>
+              <button type="button" onClick={() => setHistoryItem(null)} aria-label="ปิดประวัติ"><X size={19} /></button>
+            </header>
+            <div className="history-list">
+              {historyLoading ? (
+                <div className="history-empty"><LoaderCircle className="spin" size={22} /> กำลังโหลดประวัติ</div>
+              ) : historyEntries.length ? (
+                historyEntries.map((entry) => (
+                  <article key={entry.id}>
+                    <span className="history-dot" />
+                    <div>
+                      <strong>{formatThaiDateTime(entry.editedAt)}</strong>
+                      <small>แก้ไขโดย {entry.editedBy || "ไม่ระบุผู้ใช้"}</small>
+                      <div className="history-fields">
+                        {entry.changedFields.map((field) => (
+                          <span key={field}>{changedFieldLabels[field] || field}</span>
+                        ))}
+                      </div>
+                    </div>
+                  </article>
+                ))
+              ) : (
+                <div className="history-empty">ยังไม่มีประวัติการแก้ไขรายการนี้</div>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

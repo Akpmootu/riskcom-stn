@@ -1,4 +1,4 @@
-import { ArrowLeft, HeartPulse, UserPlus } from "lucide-react";
+import { ArrowLeft, UserPlus } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getPortalContext } from "@/app/lib/users";
@@ -17,7 +17,7 @@ export default async function RegistrationPage() {
     <main className="member-page">
       <header className="member-header">
         <Link href="/" className="brand">
-          <span className="brand-mark"><HeartPulse size={24} /></span>
+          <span className="brand-mark"><img src="/satun-risk-logo.png" alt="" aria-hidden="true" /></span>
           <span>
             <strong>ลงทะเบียนผู้ใช้งาน</strong>
             <small>คลังสื่อสารความเสี่ยง จังหวัดสตูล</small>
