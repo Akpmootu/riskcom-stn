@@ -11,6 +11,7 @@
 
 ```bash
 npm install
+copy .env.example .env.local
 npm run dev
 npm run build
 ```
@@ -23,6 +24,30 @@ npm run build
 npm run dev:sites
 npm run build:sites
 ```
+
+## ระบบสมาชิกและการเข้าสู่ระบบ
+
+- ผู้ใช้งานที่ได้รับอนุมัติเข้าสู่ระบบครั้งถัดไปด้วย Google/Gmail
+- ผู้สมัครใหม่เริ่มลงทะเบียนผ่าน Google หรือ LINE ได้
+- ผู้สมัครต้องระบุชื่อ นามสกุล ตำแหน่ง สถานที่ปฏิบัติงาน เบอร์โทร และ Gmail
+- `akaporn1234@gmail.com` ถูกสร้างเป็น `super_admin` และอนุมัติอัตโนมัติ
+- Super Admin อนุมัติหรือปฏิเสธสมาชิก และแต่งตั้งผู้ดูแลระบบได้
+- ข้อมูลสมาชิกบันทึกในชีต `users` ภายใน Google Spreadsheet เดียวกับคลังสื่อ
+
+ตั้งค่าตัวแปรใน `.env.local` ตาม `.env.example` โดยสร้าง `AUTH_SECRET`
+เป็นค่าสุ่มที่คาดเดาได้ยาก และเก็บค่าลับทั้งหมดไว้นอก Git
+
+Callback URL สำหรับ Production:
+
+```text
+Google: https://riskcom-stn.vercel.app/api/auth/callback/google
+LINE:   https://riskcom-stn.vercel.app/api/auth/callback/line
+```
+
+เมื่อติดตั้งหรืออัปเดต Google Apps Script ให้ใช้ไฟล์
+`integrations/google-apps-script/Code.gs` จากนั้นเรียก
+`setupSatunRiskGallery()` หนึ่งครั้งเพื่อสร้างชีต `users`
+และบัญชี Super Admin ก่อนเผยแพร่ Web app เวอร์ชันใหม่
 
 ## Included Shape
 
@@ -94,7 +119,8 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 ## Useful Commands
 
 - `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
+- `npm run build`: verify the Next.js build for Vercel
+- `npm run build:sites`: verify the vinext build for OpenAI Sites
 - `npm test`: build the starter and verify its rendered loading skeleton
 - `npm run db:generate`: generate Drizzle migrations after schema changes
 

@@ -2,7 +2,6 @@
 
 import {
   AlertTriangle,
-  ArrowLeft,
   Check,
   CloudUpload,
   Copy,
@@ -11,7 +10,6 @@ import {
   FileText,
   FolderCheck,
   HeartPulse,
-  KeyRound,
   Link2,
   LoaderCircle,
   LockKeyhole,
@@ -23,7 +21,9 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
+import { signOut } from "next-auth/react";
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { isManagerRole, type PortalUser } from "../auth-types";
 import type { MediaItem, MediaResponse } from "../types";
 
 type ConnectionStatus = {
@@ -34,12 +34,9 @@ type ConnectionStatus = {
   sheetName?: string;
 };
 
-export function AdminConsole() {
-  const [accessKey, setAccessKey] = useState("");
-  const [activeKey, setActiveKey] = useState("");
+export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
-  const [loginError, setLoginError] = useState("");
-  const [checking, setChecking] = useState(false);
+  const [checking, setChecking] = useState(true);
   const [items, setItems] = useState<MediaItem[]>([]);
   const [source, setSource] = useState<MediaResponse["source"]>("demo");
   const [file, setFile] = useState<File | null>(null);
@@ -48,6 +45,11 @@ export function AdminConsole() {
   const [formMessage, setFormMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    void Promise.all([checkConnection(), loadItems()]);
+    // Initial portal data is intentionally loaded once for the authenticated user.
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -62,33 +64,27 @@ export function AdminConsole() {
     setSource(result.source);
   }
 
-  async function checkConnection(key: string) {
+  async function checkConnection() {
     setChecking(true);
-    setLoginError("");
     try {
       const response = await fetch("/api/admin/status", {
-        headers: { "x-admin-key": key },
         cache: "no-store",
       });
       const result = (await response.json()) as ConnectionStatus & { error?: string };
-      if (response.status === 401) throw new Error(result.error || "รหัสผู้ดูแลไม่ถูกต้อง");
-      setActiveKey(key);
+      if (!response.ok) throw new Error(result.error || "ตรวจสอบการเชื่อมต่อไม่สำเร็จ");
       setStatus(result);
-      await loadItems();
     } catch (error) {
-      setLoginError(error instanceof Error ? error.message : "เข้าสู่ระบบไม่สำเร็จ");
+      setStatus({
+        ok: false,
+        connected: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : "ตรวจสอบการเชื่อมต่อไม่สำเร็จ",
+      });
     } finally {
       setChecking(false);
     }
-  }
-
-  function handleLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!accessKey.trim()) {
-      setLoginError("กรุณากรอกรหัสผู้ดูแล");
-      return;
-    }
-    void checkConnection(accessKey.trim());
   }
 
   function chooseFile(nextFile: File | null) {
@@ -108,7 +104,6 @@ export function AdminConsole() {
     try {
       const response = await fetch("/api/admin/upload", {
         method: "POST",
-        headers: { "x-admin-key": activeKey },
         body: data,
       });
       const result = (await response.json()) as { ok?: boolean; error?: string };
@@ -128,7 +123,7 @@ export function AdminConsole() {
     if (!status?.connected || !window.confirm(`ย้าย “${item.title}” ไปถังขยะหรือไม่`)) return;
     const response = await fetch("/api/admin/delete", {
       method: "POST",
-      headers: { "content-type": "application/json", "x-admin-key": activeKey },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ id: item.id }),
     });
     const result = (await response.json()) as { ok?: boolean; error?: string };
@@ -145,47 +140,6 @@ export function AdminConsole() {
     window.setTimeout(() => setCopied(false), 1800);
   }
 
-  if (!activeKey || !status) {
-    return (
-      <main className="admin-login-page">
-        <div className="admin-login-brand">
-          <span className="brand-mark"><HeartPulse size={25} /></span>
-          <span><strong>คลังสื่อสารความเสี่ยง</strong><small>สำนักงานสาธารณสุขจังหวัดสตูล</small></span>
-        </div>
-        <div className="login-shell">
-          <Link href="/" className="back-home"><ArrowLeft size={17} /> กลับหน้าคลังสื่อ</Link>
-          <section className="login-card">
-            <span className="login-icon"><LockKeyhole size={28} /></span>
-            <span className="section-kicker">ADMIN PORTAL</span>
-            <h1>เข้าสู่ระบบผู้ดูแล</h1>
-            <p>สำหรับเจ้าหน้าที่ที่ได้รับอนุญาตให้อัปโหลดและจัดการสื่อเท่านั้น</p>
-            <form onSubmit={handleLogin}>
-              <label>
-                รหัสผู้ดูแล
-                <span className="input-with-icon">
-                  <KeyRound size={18} />
-                  <input
-                    type="password"
-                    value={accessKey}
-                    onChange={(event) => setAccessKey(event.target.value)}
-                    autoComplete="current-password"
-                    placeholder="กรอกรหัสผู้ดูแล"
-                  />
-                </span>
-              </label>
-              {loginError && <div className="form-alert error"><AlertTriangle size={16} /> {loginError}</div>}
-              <button className="admin-primary" type="submit" disabled={checking}>
-                {checking ? <LoaderCircle className="spin" size={18} /> : <ShieldCheck size={18} />}
-                {checking ? "กำลังตรวจสอบ..." : "เข้าสู่ระบบ"}
-              </button>
-            </form>
-            <small className="login-note">รหัสจะถูกใช้เฉพาะในหน้านี้และไม่ถูกบันทึกบนอุปกรณ์</small>
-          </section>
-        </div>
-      </main>
-    );
-  }
-
   return (
     <main className="admin-page">
       <header className="admin-header">
@@ -195,8 +149,12 @@ export function AdminConsole() {
             <span><strong>ระบบจัดการสื่อ</strong><small>สำนักงานสาธารณสุขจังหวัดสตูล</small></span>
           </Link>
           <div className="admin-nav-actions">
+            <Link href="/admin/profile">โปรไฟล์ของฉัน</Link>
+            {isManagerRole(currentUser.role) && (
+              <Link href="/admin/users">จัดการสมาชิก</Link>
+            )}
             <a href="/" target="_blank"><Eye size={17} /> ดูหน้าเว็บไซต์</a>
-            <button type="button" onClick={() => { setActiveKey(""); setStatus(null); setAccessKey(""); }}>
+            <button type="button" onClick={() => void signOut({ callbackUrl: "/" })}>
               <LogOut size={17} /> ออกจากระบบ
             </button>
           </div>
@@ -208,26 +166,26 @@ export function AdminConsole() {
           <div>
             <span className="section-kicker">CONTENT MANAGEMENT</span>
             <h1>จัดการคลังสื่อ</h1>
-            <p>อัปโหลดข้อมูลครั้งเดียว ระบบจะเก็บไฟล์และรายละเอียดไว้ในบัญชี Google ของหน่วยงาน</p>
+            <p>{currentUser.firstName} {currentUser.lastName} • {currentUser.position} • อัปโหลดข้อมูลไปยังบัญชี Google ของหน่วยงาน</p>
           </div>
-          <button className="refresh-button" type="button" onClick={() => void checkConnection(activeKey)} disabled={checking}>
+          <button className="refresh-button" type="button" onClick={() => void checkConnection()} disabled={checking}>
             <RefreshCw className={checking ? "spin" : ""} size={17} /> ตรวจสอบการเชื่อมต่อ
           </button>
         </section>
 
-        <section className={status.connected ? "connection-banner connected" : "connection-banner pending"}>
-          <span className="connection-icon">{status.connected ? <FolderCheck size={25} /> : <Link2 size={25} />}</span>
+        <section className={status?.connected ? "connection-banner connected" : "connection-banner pending"}>
+          <span className="connection-icon">{status?.connected ? <FolderCheck size={25} /> : <Link2 size={25} />}</span>
           <div>
-            <strong>{status.connected ? "เชื่อมต่อ Google พร้อมใช้งาน" : "ยังต้องเชื่อมต่อ Google"}</strong>
-            <p>{status.message}</p>
-            {status.connected && (
+            <strong>{status?.connected ? "เชื่อมต่อ Google พร้อมใช้งาน" : "กำลังตรวจสอบการเชื่อมต่อ Google"}</strong>
+            <p>{status?.message || "โปรดรอสักครู่"}</p>
+            {status?.connected && (
               <small>Drive: {status.folderName || "โฟลเดอร์สื่อ"} • Sheets: {status.sheetName || "ฐานข้อมูลสื่อ"}</small>
             )}
           </div>
-          <span className="connection-state">{status.connected ? <><Check size={15} /> พร้อมใช้งาน</> : "รอตั้งค่า"}</span>
+          <span className="connection-state">{status?.connected ? <><Check size={15} /> พร้อมใช้งาน</> : "กำลังตรวจสอบ"}</span>
         </section>
 
-        {!status.connected && (
+        {status && !status.connected && (
           <section className="setup-panel">
             <div className="setup-heading">
               <span className="setup-number">3</span>
@@ -257,10 +215,10 @@ export function AdminConsole() {
           <section className="upload-panel">
             <div className="panel-heading">
               <div><span className="panel-icon"><CloudUpload size={21} /></span><span><h2>เพิ่มสื่อใหม่</h2><p>รองรับ JPG, PNG, WebP และ PDF ไม่เกิน 10 MB</p></span></div>
-              {!status.connected && <span className="locked-label"><LockKeyhole size={14} /> รอเชื่อมต่อ</span>}
+              {!status?.connected && <span className="locked-label"><LockKeyhole size={14} /> รอเชื่อมต่อ</span>}
             </div>
             <form onSubmit={handleUpload}>
-              <fieldset disabled={!status.connected || uploading}>
+              <fieldset disabled={!status?.connected || uploading}>
                 <div
                   className={file ? "upload-dropzone has-file" : "upload-dropzone"}
                   onClick={() => fileInput.current?.click()}
@@ -318,7 +276,7 @@ export function AdminConsole() {
                 </div>
               </fieldset>
               {formMessage && <div className={`form-alert ${formMessage.type}`}><span>{formMessage.type === "success" ? <Check size={17} /> : <AlertTriangle size={17} />}</span>{formMessage.text}</div>}
-              <button className="admin-primary submit-media" type="submit" disabled={!status.connected || !file || uploading}>
+              <button className="admin-primary submit-media" type="submit" disabled={!status?.connected || !file || uploading}>
                 {uploading ? <LoaderCircle className="spin" size={18} /> : <CloudUpload size={18} />}
                 {uploading ? "กำลังบันทึกลง Google..." : "บันทึกและเผยแพร่สื่อ"}
               </button>
@@ -335,7 +293,9 @@ export function AdminConsole() {
                 <article key={item.id}>
                   <span className={`manager-thumb thumb-${item.phase}`}>{item.fileType.includes("pdf") ? <FileText size={20} /> : <FileImage size={20} />}</span>
                   <div><strong>{item.title}</strong><small>{item.category} • {item.location}</small><em>{item.status === "published" ? "เผยแพร่แล้ว" : "ฉบับร่าง"}</em></div>
-                  <button type="button" disabled={!status.connected || source === "demo"} onClick={() => void deleteItem(item)} aria-label={`ลบ ${item.title}`}><Trash2 size={16} /></button>
+                  {isManagerRole(currentUser.role) && (
+                    <button type="button" disabled={!status?.connected || source === "demo"} onClick={() => void deleteItem(item)} aria-label={`ลบ ${item.title}`}><Trash2 size={16} /></button>
+                  )}
                 </article>
               ))}
             </div>
