@@ -1,7 +1,6 @@
 import {
   ArrowLeft,
   BadgeCheck,
-  HeartPulse,
   UserRound,
 } from "lucide-react";
 import Link from "next/link";
@@ -28,7 +27,7 @@ export default async function ProfilePage() {
       <header className="member-header">
         <Link href="/" className="brand">
           <span className="brand-mark">
-            <HeartPulse size={24} />
+            <img src="/satun-risk-logo.png" alt="" aria-hidden="true" />
           </span>
           <span>
             <strong>โปรไฟล์ผู้ใช้งาน</strong>

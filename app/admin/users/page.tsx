@@ -1,4 +1,4 @@
-import { ArrowLeft, HeartPulse, UsersRound } from "lucide-react";
+import { ArrowLeft, UsersRound } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { isManagerRole } from "@/app/auth-types";
@@ -23,7 +23,7 @@ export default async function UserManagementPage() {
       <header className="member-header">
         <Link href="/" className="brand">
           <span className="brand-mark">
-            <HeartPulse size={24} />
+            <img src="/satun-risk-logo.png" alt="" aria-hidden="true" />
           </span>
           <span>
             <strong>จัดการสมาชิก</strong>

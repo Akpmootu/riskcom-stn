@@ -13,6 +13,8 @@ const FOLDER_NAME = "คลังสื่อสารความเสี่�
 const SPREADSHEET_NAME = "ฐานข้อมูลคลังสื่อสารความเสี่ยง สสจ.สตูล";
 const SHEET_NAME = "media";
 const USERS_SHEET_NAME = "users";
+const MEDIA_HISTORY_SHEET_NAME = "media_edit_logs";
+const SITE_STATS_SHEET_NAME = "site_stats";
 const SUPER_ADMIN_EMAIL = "akaporn1234@gmail.com";
 const HEADERS = [
   "id",
@@ -32,6 +34,9 @@ const HEADERS = [
   "status",
   "createdAt",
   "uploadedBy",
+  "updatedAt",
+  "updatedBy",
+  "revisionCount",
 ];
 const USER_HEADERS = [
   "id",
@@ -52,6 +57,16 @@ const USER_HEADERS = [
   "approvedAt",
   "approvedBy",
 ];
+const MEDIA_HISTORY_HEADERS = [
+  "id",
+  "mediaId",
+  "editedAt",
+  "editedBy",
+  "changedFields",
+  "beforeJson",
+  "afterJson",
+];
+const SITE_STATS_HEADERS = ["key", "value", "updatedAt"];
 
 function setupSatunRiskGallery() {
   const resources = ensureResources_();
@@ -92,6 +107,24 @@ function doPost(event) {
     }
     if (payload.action === "upload") {
       return jsonOutput_({ ok: true, item: uploadMedia_(payload) });
+    }
+    if (payload.action === "listAllMedia") {
+      return jsonOutput_({ ok: true, items: listMedia_("") });
+    }
+    if (payload.action === "updateMedia") {
+      return jsonOutput_({ ok: true, item: updateMedia_(payload) });
+    }
+    if (payload.action === "listMediaHistory") {
+      return jsonOutput_({
+        ok: true,
+        history: listMediaHistory_(String(payload.mediaId || "")),
+      });
+    }
+    if (payload.action === "trackView") {
+      return jsonOutput_({ ok: true, stats: trackVisitorView_(payload) });
+    }
+    if (payload.action === "getStats") {
+      return jsonOutput_({ ok: true, stats: getVisitorStats_() });
     }
     if (payload.action === "delete") {
       deleteMedia_(String(payload.id || ""));
@@ -156,6 +189,16 @@ function ensureResources_() {
   ensureSheetHeaders_(usersSheet, USER_HEADERS);
   ensureSuperAdmin_(usersSheet);
 
+  let historySheet = spreadsheet.getSheetByName(MEDIA_HISTORY_SHEET_NAME);
+  if (!historySheet) {
+    historySheet = spreadsheet.insertSheet(MEDIA_HISTORY_SHEET_NAME);
+  }
+  ensureSheetHeaders_(historySheet, MEDIA_HISTORY_HEADERS);
+
+  let statsSheet = spreadsheet.getSheetByName(SITE_STATS_SHEET_NAME);
+  if (!statsSheet) statsSheet = spreadsheet.insertSheet(SITE_STATS_SHEET_NAME);
+  ensureSheetHeaders_(statsSheet, SITE_STATS_HEADERS);
+
   return {
     folderId: folderId,
     spreadsheetId: spreadsheetId,
@@ -182,13 +225,16 @@ function listMedia_(status) {
       item.keywords = String(item.keywords || "")
         .split("|")
         .filter(Boolean);
+      item.revisionCount = Number(item.revisionCount || 0);
       return item;
     })
     .filter(function (item) {
       return !status || item.status === status;
     })
     .sort(function (a, b) {
-      return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+      return String(b.updatedAt || b.createdAt || "").localeCompare(
+        String(a.updatedAt || a.createdAt || ""),
+      );
     });
 }
 
@@ -221,6 +267,9 @@ function uploadMedia_(payload) {
     status: payload.status === "draft" ? "draft" : "published",
     createdAt: now,
     uploadedBy: String(payload.uploadedBy || ""),
+    updatedAt: now,
+    updatedBy: String(payload.uploadedBy || ""),
+    revisionCount: 0,
   };
 
   const spreadsheet = SpreadsheetApp.openById(resources.spreadsheetId);
@@ -257,6 +306,236 @@ function deleteMedia_(id) {
     }
   }
   throw new Error("Media not found");
+}
+
+function updateMedia_(payload) {
+  const id = String(payload.id || "");
+  if (!id) throw new Error("Missing media id");
+
+  const resources = ensureResources_();
+  const spreadsheet = SpreadsheetApp.openById(resources.spreadsheetId);
+  const sheet = spreadsheet.getSheetByName(SHEET_NAME);
+  const historySheet = spreadsheet.getSheetByName(MEDIA_HISTORY_SHEET_NAME);
+  const values = sheet.getDataRange().getValues();
+  const headers = values[0].map(String);
+  const idColumn = headers.indexOf("id");
+  const editableFields = [
+    "title",
+    "description",
+    "phase",
+    "category",
+    "eventDate",
+    "location",
+    "keywords",
+    "altText",
+    "status",
+  ];
+
+  for (let rowIndex = 1; rowIndex < values.length; rowIndex += 1) {
+    if (String(values[rowIndex][idColumn]) !== id) continue;
+
+    const item = rowToObject_(values[rowIndex], headers);
+    item.keywords = String(item.keywords || "")
+      .split("|")
+      .filter(Boolean);
+    if (item.status === "deleted") throw new Error("Media was deleted");
+
+    const before = {};
+    editableFields.forEach(function (field) {
+      before[field] = item[field];
+    });
+
+    item.title = requiredText_(payload.title, "title");
+    item.description = requiredText_(payload.description, "description");
+    item.phase = String(payload.phase || "");
+    item.category = requiredText_(payload.category, "category");
+    item.eventDate = requiredText_(payload.eventDate, "eventDate");
+    item.location = requiredText_(payload.location, "location");
+    item.keywords = Array.isArray(payload.keywords)
+      ? payload.keywords
+          .map(function (keyword) {
+            return String(keyword || "").trim();
+          })
+          .filter(Boolean)
+      : [];
+    item.altText = requiredText_(payload.altText, "altText");
+    item.status = payload.status === "draft" ? "draft" : "published";
+
+    if (["before", "during", "after"].indexOf(item.phase) < 0) {
+      throw new Error("Invalid incident phase");
+    }
+
+    const after = {};
+    const changedFields = editableFields.filter(function (field) {
+      after[field] = item[field];
+      return JSON.stringify(before[field]) !== JSON.stringify(after[field]);
+    });
+
+    if (!changedFields.length) return normalizeMedia_(item);
+
+    const now = new Date().toISOString();
+    item.updatedAt = now;
+    item.updatedBy = String(payload.editedBy || "");
+    item.revisionCount = Number(item.revisionCount || 0) + 1;
+    sheet
+      .getRange(rowIndex + 1, 1, 1, HEADERS.length)
+      .setValues([mediaToRow_(item)]);
+
+    historySheet.appendRow([
+      Utilities.getUuid(),
+      id,
+      now,
+      item.updatedBy,
+      changedFields.join("|"),
+      JSON.stringify(before),
+      JSON.stringify(after),
+    ]);
+    return normalizeMedia_(item);
+  }
+  throw new Error("Media not found");
+}
+
+function listMediaHistory_(mediaId) {
+  if (!mediaId) throw new Error("Missing media id");
+  const resources = ensureResources_();
+  const spreadsheet = SpreadsheetApp.openById(resources.spreadsheetId);
+  const sheet = spreadsheet.getSheetByName(MEDIA_HISTORY_SHEET_NAME);
+  const values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
+  const headers = values[0].map(String);
+
+  return values
+    .slice(1)
+    .map(function (row) {
+      return rowToObject_(row, headers);
+    })
+    .filter(function (entry) {
+      return String(entry.mediaId || "") === mediaId;
+    })
+    .map(function (entry) {
+      let before = {};
+      let after = {};
+      try {
+        before = JSON.parse(String(entry.beforeJson || "{}"));
+      } catch (_) {}
+      try {
+        after = JSON.parse(String(entry.afterJson || "{}"));
+      } catch (_) {}
+      return {
+        id: String(entry.id || ""),
+        mediaId: String(entry.mediaId || ""),
+        editedAt: String(entry.editedAt || ""),
+        editedBy: String(entry.editedBy || ""),
+        changedFields: String(entry.changedFields || "")
+          .split("|")
+          .filter(Boolean),
+        before: before,
+        after: after,
+      };
+    })
+    .sort(function (a, b) {
+      return String(b.editedAt || "").localeCompare(String(a.editedAt || ""));
+    })
+    .slice(0, 100);
+}
+
+function trackVisitorView_(payload) {
+  const sessionToken = String(payload.sessionToken || "");
+  if (!/^[a-zA-Z0-9_-]{8,80}$/.test(sessionToken)) {
+    throw new Error("Invalid session token");
+  }
+
+  const cache = CacheService.getScriptCache();
+  const cacheKey = "site-view-" + sessionToken;
+  if (cache.get(cacheKey)) return getVisitorStats_();
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    if (cache.get(cacheKey)) return getVisitorStats_();
+    const resources = ensureResources_();
+    const spreadsheet = SpreadsheetApp.openById(resources.spreadsheetId);
+    const sheet = spreadsheet.getSheetByName(SITE_STATS_SHEET_NAME);
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const todayKey =
+      "views:" +
+      Utilities.formatDate(now, "Asia/Bangkok", "yyyy-MM-dd");
+    incrementStat_(sheet, "views:total", nowIso);
+    incrementStat_(sheet, todayKey, nowIso);
+    cache.put(cacheKey, "1", 21600);
+    return readVisitorStats_(sheet, todayKey);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getVisitorStats_() {
+  const resources = ensureResources_();
+  const spreadsheet = SpreadsheetApp.openById(resources.spreadsheetId);
+  const sheet = spreadsheet.getSheetByName(SITE_STATS_SHEET_NAME);
+  const todayKey =
+    "views:" +
+    Utilities.formatDate(new Date(), "Asia/Bangkok", "yyyy-MM-dd");
+  return readVisitorStats_(sheet, todayKey);
+}
+
+function readVisitorStats_(sheet, todayKey) {
+  const values = sheet.getDataRange().getValues();
+  let totalViews = 0;
+  let todayViews = 0;
+  let updatedAt = "";
+  for (let index = 1; index < values.length; index += 1) {
+    const key = String(values[index][0] || "");
+    if (key === "views:total") {
+      totalViews = Number(values[index][1] || 0);
+      updatedAt = String(values[index][2] || "");
+    }
+    if (key === todayKey) todayViews = Number(values[index][1] || 0);
+  }
+  return {
+    totalViews: totalViews,
+    todayViews: todayViews,
+    updatedAt: updatedAt,
+  };
+}
+
+function incrementStat_(sheet, key, updatedAt) {
+  const values = sheet.getDataRange().getValues();
+  for (let index = 1; index < values.length; index += 1) {
+    if (String(values[index][0] || "") === key) {
+      sheet
+        .getRange(index + 1, 2, 1, 2)
+        .setValues([[Number(values[index][1] || 0) + 1, updatedAt]]);
+      return;
+    }
+  }
+  sheet.appendRow([key, 1, updatedAt]);
+}
+
+function normalizeMedia_(item) {
+  const normalized = {};
+  HEADERS.forEach(function (header) {
+    normalized[header] = item[header] === undefined ? "" : item[header];
+  });
+  normalized.keywords = Array.isArray(item.keywords)
+    ? item.keywords
+    : String(item.keywords || "")
+        .split("|")
+        .filter(Boolean);
+  normalized.revisionCount = Number(item.revisionCount || 0);
+  return normalized;
+}
+
+function mediaToRow_(item) {
+  return HEADERS.map(function (header) {
+    if (header === "keywords") {
+      return Array.isArray(item.keywords)
+        ? item.keywords.join("|")
+        : String(item.keywords || "");
+    }
+    return item[header] === undefined ? "" : item[header];
+  });
 }
 
 function ensureSheetHeaders_(sheet, requiredHeaders) {
