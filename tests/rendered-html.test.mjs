@@ -23,15 +23,18 @@ async function render() {
   );
 }
 
-test("server-renders the Satun risk communication gallery", async () => {
+test("server-renders an accessible gallery loading skeleton", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
   assert.match(html, /<title>คลังสื่อสารความเสี่ยง จังหวัดสตูล<\/title>/);
-  assert.match(html, /รู้ก่อน เตรียมพร้อม/);
   assert.match(html, /src="\/satun-risk-logo\.png"/);
+  assert.match(html, /class="site-shell site-data-skeleton"/);
+  assert.match(html, /aria-busy="true"/);
+  assert.match(html, /กำลังดาวน์โหลดข้อมูลจากคลังสื่อ กรุณารอสักครู่/);
+  assert.match(html, /class="skeleton-block skeleton-media-visual"/);
   assert.match(html, /class="mobile-bottom-nav"/);
   assert.match(
     html,
@@ -67,10 +70,13 @@ test("includes mobile, fullscreen, edit-history, analytics, and brand assets", a
 
   assert.match(gallery, /className="mobile-bottom-nav"/);
   assert.match(gallery, /className="fullscreen-viewer"/);
+  assert.match(gallery, /if \(loading\) return <MediaGallerySkeleton \/>/);
   assert.match(gallery, /\/api\/analytics\/view/);
   assert.match(adminConsole, /\/api\/admin\/media/);
   assert.match(adminConsole, /\/api\/admin\/history/);
   assert.match(css, /env\(safe-area-inset-bottom\)/);
+  assert.match(css, /\.skeleton-status-banner/);
+  assert.match(css, /@keyframes skeleton/);
   assert.match(css, /\.admin-edit-modal/);
   assert.match(appsScript, /MEDIA_HISTORY_SHEET_NAME = "media_edit_logs"/);
   assert.match(appsScript, /SITE_STATS_SHEET_NAME = "site_stats"/);

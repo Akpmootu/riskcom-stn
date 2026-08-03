@@ -118,6 +118,193 @@ function MediaArtwork({ item, large = false }: { item: MediaItem; large?: boolea
   );
 }
 
+function SkeletonBlock({ className = "" }: { className?: string }) {
+  return <span className={`skeleton-block ${className}`} aria-hidden="true" />;
+}
+
+function MediaGallerySkeleton() {
+  return (
+    <main
+      className="site-shell site-data-skeleton"
+      id="top"
+      aria-busy="true"
+      aria-describedby="gallery-loading-status"
+    >
+      <div className="top-ribbon">
+        <div className="container ribbon-inner">
+          <span><HeartPulse size={15} /> ศูนย์สื่อสารความเสี่ยงด้านสุขภาพ จังหวัดสตูล</span>
+          <span>ข้อมูลเพื่อประชาชน • ใช้งานและเผยแพร่ต่อได้</span>
+        </div>
+      </div>
+
+      <header className="site-header">
+        <div className="container nav-wrap">
+          <a className="brand" href="#top" aria-label="กลับไปหน้าแรก">
+            <span className="brand-mark">
+              <img src="/satun-risk-logo.png" alt="" aria-hidden="true" />
+            </span>
+            <span>
+              <strong>คลังสื่อสารความเสี่ยง</strong>
+              <small>สำนักงานสาธารณสุขจังหวัดสตูล</small>
+            </span>
+          </a>
+          <div className="skeleton-nav" aria-hidden="true">
+            <SkeletonBlock />
+            <SkeletonBlock />
+            <SkeletonBlock />
+            <SkeletonBlock className="skeleton-nav-admin" />
+          </div>
+          <span className="skeleton-mobile-menu" aria-hidden="true"><Menu size={22} /></span>
+        </div>
+      </header>
+
+      <div className="skeleton-status-banner" id="gallery-loading-status" role="status" aria-live="polite">
+        <span className="skeleton-loading-dot" aria-hidden="true" />
+        กำลังดาวน์โหลดข้อมูลจากคลังสื่อ กรุณารอสักครู่
+      </div>
+
+      <section className="hero skeleton-hero" aria-label="กำลังโหลดข้อมูลส่วนแนะนำ">
+        <div className="hero-pattern" />
+        <div className="container hero-grid">
+          <div className="hero-copy">
+            <SkeletonBlock className="skeleton-eyebrow" />
+            <div className="skeleton-title" aria-hidden="true">
+              <SkeletonBlock />
+              <SkeletonBlock />
+            </div>
+            <div className="skeleton-paragraph" aria-hidden="true">
+              <SkeletonBlock />
+              <SkeletonBlock />
+              <SkeletonBlock />
+            </div>
+            <SkeletonBlock className="skeleton-hero-search" />
+            <div className="skeleton-metrics" aria-hidden="true">
+              <SkeletonBlock />
+              <SkeletonBlock />
+              <SkeletonBlock />
+            </div>
+          </div>
+          <div className="hero-panel">
+            <div className="island-shape island-shape-one" />
+            <div className="island-shape island-shape-two" />
+            <div className="alert-card skeleton-alert-card" aria-hidden="true">
+              <div className="skeleton-alert-head">
+                <SkeletonBlock />
+                <SkeletonBlock />
+              </div>
+              <SkeletonBlock className="skeleton-alert-icon" />
+              <SkeletonBlock className="skeleton-alert-kicker" />
+              <SkeletonBlock className="skeleton-alert-title" />
+              <SkeletonBlock className="skeleton-alert-title skeleton-alert-title-short" />
+              <div className="skeleton-alert-meta">
+                <SkeletonBlock />
+                <SkeletonBlock />
+              </div>
+              <SkeletonBlock className="skeleton-alert-action" />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="phase-section" id="phases" aria-label="กำลังโหลดช่วงเหตุการณ์">
+        <div className="container">
+          <div className="section-heading skeleton-section-heading" aria-hidden="true">
+            <div>
+              <SkeletonBlock className="skeleton-kicker" />
+              <SkeletonBlock className="skeleton-section-title" />
+            </div>
+            <div className="skeleton-section-copy">
+              <SkeletonBlock />
+              <SkeletonBlock />
+            </div>
+          </div>
+          <div className="phase-path skeleton-phase-path" aria-hidden="true">
+            {[0, 1, 2].map((item) => (
+              <article className="phase-card skeleton-phase-card" key={item}>
+                <SkeletonBlock className="skeleton-phase-icon" />
+                <SkeletonBlock className="skeleton-phase-title" />
+                <SkeletonBlock className="skeleton-phase-copy" />
+                <SkeletonBlock className="skeleton-phase-copy skeleton-phase-copy-short" />
+                <SkeletonBlock className="skeleton-phase-link" />
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="gallery-section" id="gallery" aria-label="กำลังโหลดคลังสื่อ">
+        <div className="container">
+          <div className="section-heading skeleton-section-heading" aria-hidden="true">
+            <div>
+              <SkeletonBlock className="skeleton-kicker" />
+              <SkeletonBlock className="skeleton-section-title" />
+            </div>
+            <div className="skeleton-section-copy">
+              <SkeletonBlock />
+              <SkeletonBlock />
+            </div>
+          </div>
+          <div className="gallery-tools skeleton-gallery-tools" aria-hidden="true">
+            <SkeletonBlock className="skeleton-gallery-search" />
+            <div className="skeleton-filter-chips">
+              <SkeletonBlock />
+              <SkeletonBlock />
+              <SkeletonBlock />
+              <SkeletonBlock />
+            </div>
+          </div>
+          <SkeletonBlock className="skeleton-result-line" />
+          <div className="gallery-grid" aria-hidden="true">
+            {[0, 1, 2, 3, 4, 5].map((item) => (
+              <article className="media-card skeleton-media-card" key={item}>
+                <SkeletonBlock className="skeleton-media-visual" />
+                <div className="media-body">
+                  <SkeletonBlock className="skeleton-media-category" />
+                  <SkeletonBlock className="skeleton-media-title" />
+                  <SkeletonBlock className="skeleton-media-title skeleton-media-title-short" />
+                  <SkeletonBlock className="skeleton-media-copy" />
+                  <SkeletonBlock className="skeleton-media-copy skeleton-media-copy-short" />
+                  <SkeletonBlock className="skeleton-media-location" />
+                  <div className="skeleton-media-footer">
+                    <SkeletonBlock />
+                    <span><SkeletonBlock /><SkeletonBlock /></span>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <footer className="site-footer">
+        <div className="container footer-grid">
+          <div className="footer-brand">
+            <span className="brand-mark">
+              <img src="/satun-risk-logo.png" alt="" aria-hidden="true" />
+            </span>
+            <div><strong>คลังสื่อสารความเสี่ยง</strong><small>สำนักงานสาธารณสุขจังหวัดสตูล</small></div>
+          </div>
+          <div className="footer-credit">
+            <p>จัดทำโดย นายอรรฆพร ศรีปานรอด นักวิชาการคอมพิวเตอร์ปฏิบัติการ</p>
+            <p>กลุ่มงานสุขภาพดิจิทัล สำนักงานสาธารณสุขจังหวัดสตูล</p>
+          </div>
+          <div className="footer-actions skeleton-footer-actions" aria-hidden="true">
+            <SkeletonBlock />
+            <SkeletonBlock />
+          </div>
+        </div>
+      </footer>
+
+      <nav className="mobile-bottom-nav" aria-label="เมนูทางลัด">
+        <a href="#top"><Home size={20} /><span>หน้าแรก</span></a>
+        <a href="#phases"><ShieldCheck size={20} /><span>ช่วงเหตุ</span></a>
+        <a href="#gallery"><ImageIcon size={20} /><span>คลังสื่อ</span></a>
+        <a href="/admin"><UserRound size={20} /><span>ผู้ดูแล</span></a>
+      </nav>
+    </main>
+  );
+}
+
 export function MediaGallery() {
   const [items, setItems] = useState<MediaItem[]>([]);
   const [source, setSource] = useState<MediaResponse["source"]>("demo");
@@ -277,6 +464,8 @@ export function MediaGallery() {
   function jumpToGallery() {
     document.getElementById("gallery")?.scrollIntoView({ behavior: "smooth" });
   }
+
+  if (loading) return <MediaGallerySkeleton />;
 
   return (
     <main className="site-shell" id="top">
@@ -474,11 +663,7 @@ export function MediaGallery() {
             {phase !== "all" && <span className="active-filter">{phaseLabels[phase]}</span>}
           </div>
 
-          {loading ? (
-            <div className="gallery-grid" aria-label="กำลังโหลดสื่อ">
-              {[0, 1, 2].map((item) => <div className="media-card skeleton-card" key={item} />)}
-            </div>
-          ) : filteredItems.length ? (
+          {filteredItems.length ? (
             <div className="gallery-grid">
               {filteredItems.map((item) => (
                 <article className="media-card" key={item.id}>
