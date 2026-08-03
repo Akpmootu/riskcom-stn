@@ -122,7 +122,7 @@ function SkeletonBlock({ className = "" }: { className?: string }) {
   return <span className={`skeleton-block ${className}`} aria-hidden="true" />;
 }
 
-function MediaGallerySkeleton() {
+export function MediaGallerySkeleton() {
   return (
     <main
       className="site-shell site-data-skeleton"
@@ -743,7 +743,14 @@ export function MediaGallery() {
           <div className="footer-actions">
             <span className="visitor-counter" title="นับหนึ่งครั้งต่อการเข้าใช้งานในแต่ละรอบ">
               <Eye size={15} />
-              ผู้เข้าชม {visitorStats?.totalViews.toLocaleString("th-TH") ?? "—"} ครั้ง
+              {visitorStats ? (
+                <>ผู้เข้าชม {visitorStats.totalViews.toLocaleString("th-TH")} ครั้ง</>
+              ) : (
+                <>
+                  <span className="sr-only">กำลังโหลดยอดผู้เข้าชม</span>
+                  <span className="skeleton-block skeleton-visitor-count" aria-hidden="true" />
+                </>
+              )}
             </span>
             <a href="/admin">เข้าสู่ระบบผู้ดูแล <ArrowRight size={15} /></a>
           </div>
