@@ -31,6 +31,7 @@ import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { isManagerRole, type PortalUser } from "../auth-types";
+import { clearMediaCache } from "../media-cache";
 import type { MediaItem, MediaResponse, MediaRevision } from "../types";
 import { AdminDashboardSkeleton } from "./admin-skeleton";
 
@@ -310,6 +311,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       if (!response.ok || !result.ok) throw new Error(result.error || "บันทึกสื่อไม่สำเร็จ");
       form.reset();
       chooseFile(null);
+      clearMediaCache();
       setFormMessage({ type: "success", text: "บันทึกไฟล์ใน Google Drive และเพิ่มข้อมูลใน Google Sheets แล้ว" });
       await loadItems();
       setMediaSort("created-desc");
@@ -333,6 +335,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       setFormMessage({ type: "error", text: result.error || "ลบสื่อไม่สำเร็จ" });
       return;
     }
+    clearMediaCache();
     setItems((current) => current.filter((entry) => entry.id !== item.id));
   }
 
@@ -375,6 +378,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
           item.id === result.item?.id ? result.item : item,
         ),
       );
+      clearMediaCache();
       setEditing(null);
       setFormMessage({
         type: "success",

@@ -17,6 +17,7 @@ import {
   MapPin,
   Maximize2,
   Menu,
+  RefreshCw,
   Search,
   Share2,
   ShieldCheck,
@@ -24,7 +25,11 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  readMediaCache,
+  writeMediaCache,
+} from "./media-cache";
 import type {
   IncidentPhase,
   MediaItem,
@@ -82,6 +87,16 @@ function formatThaiDate(value: string) {
     year: "numeric",
     timeZone: "Asia/Bangkok",
   }).format(date);
+}
+
+function formatCacheTime(value: number) {
+  return new Intl.DateTimeFormat("th-TH", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Bangkok",
+  }).format(new Date(value));
 }
 
 function getVisualClass(category: string) {
@@ -318,34 +333,86 @@ export function MediaGallery() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [visitorStats, setVisitorStats] = useState<VisitorStats | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [cacheSavedAt, setCacheSavedAt] = useState<number | null>(null);
+  const [showingCachedData, setShowingCachedData] = useState(false);
+
+  const applyMediaResponse = useCallback(
+    (result: MediaResponse, cachedAt: number, fromCache: boolean) => {
+      setItems(result.items);
+      setSource(result.source);
+      setSourceMessage(result.message ?? "");
+      setCacheSavedAt(cachedAt);
+      setShowingCachedData(fromCache);
+      const requestedId = new URLSearchParams(window.location.search).get(
+        "media",
+      );
+      const requestedItem = result.items.find(
+        (item) => item.id === requestedId,
+      );
+      if (requestedItem) setSelected(requestedItem);
+    },
+    [],
+  );
 
   useEffect(() => {
     let active = true;
-    fetch("/api/media")
-      .then((response) => response.json() as Promise<MediaResponse>)
-      .then((result) => {
+    const controller = new AbortController();
+
+    async function hydrateMedia() {
+      const cached = readMediaCache();
+      if (cached && active) {
+        applyMediaResponse(cached.response, cached.cachedAt, true);
+        setLoading(false);
+        if (cached.isFresh) return;
+        setRefreshing(true);
+      }
+
+      try {
+        const response = await fetch("/api/media", {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`Media API ${response.status}`);
+        const result = (await response.json()) as MediaResponse;
         if (!active) return;
-        setItems(result.items);
-        setSource(result.source);
-        setSourceMessage(result.message ?? "");
-        const requestedId = new URLSearchParams(window.location.search).get(
-          "media",
+
+        if (
+          cached?.response.source === "google" &&
+          result.source === "demo"
+        ) {
+          setSourceMessage(
+            "ยังใช้ข้อมูลที่บันทึกไว้ เนื่องจากตรวจสอบข้อมูลล่าสุดไม่สำเร็จ",
+          );
+          setShowingCachedData(true);
+          return;
+        }
+
+        const cachedAt = Date.now();
+        applyMediaResponse(result, cachedAt, false);
+        writeMediaCache(result, cachedAt);
+      } catch {
+        if (!active || controller.signal.aborted) return;
+        setSourceMessage(
+          cached
+            ? "กำลังใช้ข้อมูลที่บันทึกไว้ในเครื่อง เนื่องจากเชื่อมต่อข้อมูลล่าสุดไม่สำเร็จ"
+            : "ไม่สามารถโหลดข้อมูลได้ กรุณาลองใหม่อีกครั้ง",
         );
-        const requestedItem = result.items.find(
-          (item) => item.id === requestedId,
-        );
-        if (requestedItem) setSelected(requestedItem);
-      })
-      .catch(() => {
-        if (active) setSourceMessage("ไม่สามารถโหลดข้อมูลได้ กรุณาลองใหม่อีกครั้ง");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+        setShowingCachedData(Boolean(cached));
+      } finally {
+        if (active) {
+          setLoading(false);
+          setRefreshing(false);
+        }
+      }
+    }
+
+    void hydrateMedia();
     return () => {
       active = false;
+      controller.abort();
     };
-  }, []);
+  }, [applyMediaResponse]);
 
   useEffect(() => {
     let active = true;
@@ -442,6 +509,34 @@ export function MediaGallery() {
   }, [category, items, phase, query]);
 
   const featured = items[0];
+
+  async function refreshMedia() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      const response = await fetch(`/api/media?refresh=${Date.now()}`, {
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error(`Media API ${response.status}`);
+      const result = (await response.json()) as MediaResponse;
+      if (source === "google" && result.source === "demo" && items.length) {
+        throw new Error(result.message || "ตรวจสอบข้อมูลล่าสุดไม่สำเร็จ");
+      }
+      const cachedAt = Date.now();
+      applyMediaResponse(result, cachedAt, false);
+      writeMediaCache(result, cachedAt);
+      setToast("อัปเดตข้อมูลล่าสุดเรียบร้อยแล้ว");
+    } catch {
+      setShowingCachedData(Boolean(items.length));
+      setToast(
+        items.length
+          ? "ยังใช้ข้อมูลเดิมอยู่ เนื่องจากอัปเดตข้อมูลล่าสุดไม่สำเร็จ"
+          : "อัปเดตข้อมูลไม่สำเร็จ กรุณาลองใหม่อีกครั้ง",
+      );
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   async function shareItem(item: MediaItem) {
     const url = `${window.location.origin}${window.location.pathname}?media=${encodeURIComponent(item.id)}`;
@@ -559,10 +654,10 @@ export function MediaGallery() {
         </div>
       </section>
 
-      {source === "demo" && sourceMessage && (
-        <div className="container demo-notice" role="status">
+      {sourceMessage && (source === "demo" || showingCachedData) && (
+        <div className={showingCachedData ? "container demo-notice cache-notice" : "container demo-notice"} role="status">
           <span><AlertTriangle size={17} /></span>
-          <p><strong>เวอร์ชันทดลอง:</strong> {sourceMessage}</p>
+          <p><strong>{showingCachedData ? "กำลังใช้ข้อมูลที่บันทึกไว้:" : "เวอร์ชันทดลอง:"}</strong> {sourceMessage}</p>
         </div>
       )}
 
@@ -643,24 +738,42 @@ export function MediaGallery() {
                 </button>
               ))}
             </div>
-            {(phase !== "all" || category !== "ทั้งหมด" || query) && (
+            <div className="gallery-tool-actions">
+              {(phase !== "all" || category !== "ทั้งหมด" || query) && (
+                <button
+                  className="clear-filters"
+                  type="button"
+                  onClick={() => {
+                    setPhase("all");
+                    setCategory("ทั้งหมด");
+                    setQuery("");
+                  }}
+                >
+                  ล้างตัวกรอง
+                </button>
+              )}
               <button
-                className="clear-filters"
+                className="gallery-refresh"
                 type="button"
-                onClick={() => {
-                  setPhase("all");
-                  setCategory("ทั้งหมด");
-                  setQuery("");
-                }}
+                onClick={() => void refreshMedia()}
+                disabled={refreshing}
+                title="ข้ามแคชและตรวจสอบข้อมูลล่าสุดจากระบบ"
               >
-                ล้างตัวกรอง
+                <RefreshCw className={refreshing ? "spin" : ""} size={15} />
+                {refreshing ? "กำลังอัปเดต" : "อัปเดตข้อมูล"}
               </button>
-            )}
+            </div>
           </div>
 
           <div className="result-line">
             <span>พบ <strong>{filteredItems.length}</strong> รายการ</span>
             {phase !== "all" && <span className="active-filter">{phaseLabels[phase]}</span>}
+            {cacheSavedAt && (
+              <span className={showingCachedData ? "cache-meta is-cached" : "cache-meta"} aria-live="polite">
+                {refreshing ? "กำลังตรวจสอบข้อมูลใหม่" : showingCachedData ? "ข้อมูลจากแคชในเครื่อง" : "ข้อมูลล่าสุด"}
+                {` • ${formatCacheTime(cacheSavedAt)}`}
+              </span>
+            )}
           </div>
 
           {filteredItems.length ? (
