@@ -50,6 +50,7 @@ test("server-renders an accessible gallery loading skeleton", async () => {
 test("includes responsive media management, Kanit, system skeletons, and existing platform features", async () => {
   const [
     gallery,
+    mediaCache,
     adminConsole,
     adminSkeleton,
     adminLoading,
@@ -61,6 +62,7 @@ test("includes responsive media management, Kanit, system skeletons, and existin
     publicAppsScript,
   ] = await Promise.all([
     readFile(new URL("../app/media-gallery.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/media-cache.ts", import.meta.url), "utf8"),
     readFile(
       new URL("../app/admin/admin-console.tsx", import.meta.url),
       "utf8",
@@ -82,7 +84,13 @@ test("includes responsive media management, Kanit, system skeletons, and existin
   assert.match(gallery, /className="fullscreen-viewer"/);
   assert.match(gallery, /if \(loading\) return <MediaGallerySkeleton \/>/);
   assert.match(gallery, /skeleton-visitor-count/);
+  assert.match(gallery, /readMediaCache\(\)/);
+  assert.match(gallery, /\/api\/media\?refresh=/);
+  assert.match(gallery, /ข้อมูลจากแคชในเครื่อง/);
   assert.match(gallery, /\/api\/analytics\/view/);
+  assert.match(mediaCache, /MEDIA_CACHE_MAX_AGE_MS = 10 \* 60 \* 1000/);
+  assert.match(mediaCache, /window\.localStorage\.getItem/);
+  assert.match(mediaCache, /response\.source === "google"/);
   assert.match(adminConsole, /\/api\/admin\/media/);
   assert.match(adminConsole, /\/api\/admin\/history/);
   assert.match(adminConsole, /คลังสื่อทั้งหมด/);
@@ -90,6 +98,7 @@ test("includes responsive media management, Kanit, system skeletons, and existin
   assert.match(adminConsole, /อัปโหลดล่าสุดก่อน/);
   assert.match(adminConsole, /เดือนย้อนหลัง/);
   assert.match(adminConsole, /if \(hydrating\) return <AdminDashboardSkeleton \/>/);
+  assert.match(adminConsole, /clearMediaCache\(\)/);
   assert.match(adminSkeleton, /aria-busy="true"/);
   assert.match(adminLoading, /<AdminDashboardSkeleton \/>/);
   assert.match(siteLoading, /<MediaGallerySkeleton \/>/);
@@ -97,6 +106,8 @@ test("includes responsive media management, Kanit, system skeletons, and existin
   assert.match(packageJson, /@fontsource\/kanit/);
   assert.match(css, /env\(safe-area-inset-bottom\)/);
   assert.match(css, /font-family: "Kanit"/);
+  assert.match(css, /\.site-header[\s\S]*?position: sticky/);
+  assert.match(css, /\.gallery-refresh/);
   assert.match(css, /\.skeleton-status-banner/);
   assert.match(css, /\.admin-system-skeleton/);
   assert.match(css, /\.media-library-panel/);
