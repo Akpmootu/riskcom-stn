@@ -117,7 +117,17 @@ function formatMonthLabel(value: string) {
   }).format(date);
 }
 
+const DEFAULT_CATEGORIES = [
+  "น้ำท่วม",
+  "โรคติดต่อ",
+  "หมอกควัน",
+  "อุบัติเหตุ",
+  "ฟื้นฟูหลังเหตุ",
+  "อื่นๆ",
+];
+
 export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
+  const [activeTab, setActiveTab] = useState<"library" | "settings">("library");
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [checking, setChecking] = useState(true);
   const [items, setItems] = useState<MediaItem[]>([]);
@@ -143,10 +153,17 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [historyItem, setHistoryItem] = useState<MediaItem | null>(null);
   const [historyEntries, setHistoryEntries] = useState<MediaRevision[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+
+  // System Categories state for Basic Settings management
+  const [systemCategories, setSystemCategories] = useState<string[]>(DEFAULT_CATEGORIES);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [categoryMessage, setCategoryMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    void Promise.allSettled([checkConnection(), loadItems()]).finally(() => {
+    void Promise.allSettled([checkConnection(), loadItems(), loadCategories()]).finally(() => {
       setHydrating(false);
     });
     // Initial portal data is intentionally loaded once for the authenticated user.
@@ -158,12 +175,80 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     };
   }, [previewUrl]);
 
-  const categories = useMemo(
-    () => Array.from(new Set(items.map((item) => item.category).filter(Boolean))).sort(
-      (left, right) => left.localeCompare(right, "th"),
-    ),
-    [items],
-  );
+  async function loadCategories() {
+    try {
+      const response = await fetch("/api/admin/categories");
+      if (response.ok) {
+        const result = (await response.json()) as { categories?: string[] };
+        if (Array.isArray(result.categories)) {
+          setSystemCategories(result.categories);
+        }
+      }
+    } catch {
+      // Fallback gracefully
+    }
+  }
+
+  async function handleAddCategory(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = newCategoryName.trim();
+    if (!name) return;
+    setAddingCategory(true);
+    setCategoryMessage(null);
+    try {
+      const response = await fetch("/api/admin/categories", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const result = (await response.json()) as { ok?: boolean; categories?: string[]; error?: string };
+      if (!response.ok || !result.ok || !Array.isArray(result.categories)) {
+        throw new Error(result.error || "เพิ่มประเภทเหตุการณ์ไม่สำเร็จ");
+      }
+      setSystemCategories(result.categories);
+      setNewCategoryName("");
+      setCategoryMessage({ type: "success", text: `เพิ่มประเภท “${name}” สำเร็จ` });
+    } catch (error) {
+      setCategoryMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "เพิ่มประเภทเหตุการณ์ไม่สำเร็จ",
+      });
+    } finally {
+      setAddingCategory(false);
+    }
+  }
+
+  async function handleDeleteCategory(categoryName: string) {
+    if (DEFAULT_CATEGORIES.includes(categoryName)) {
+      alert("ไม่สามารถลบประเภทเหตุการณ์มาตรฐานของระบบได้");
+      return;
+    }
+    if (!window.confirm(`ต้องการลบประเภทเหตุการณ์ “${categoryName}” หรือไม่`)) return;
+    try {
+      const response = await fetch(
+        `/api/admin/categories?name=${encodeURIComponent(categoryName)}`,
+        { method: "DELETE" },
+      );
+      const result = (await response.json()) as { ok?: boolean; categories?: string[]; error?: string };
+      if (!response.ok || !result.ok || !Array.isArray(result.categories)) {
+        throw new Error(result.error || "ลบประเภทเหตุการณ์ไม่สำเร็จ");
+      }
+      setSystemCategories(result.categories);
+      setCategoryMessage({ type: "success", text: `ลบประเภท “${categoryName}” สำเร็จ` });
+    } catch (error) {
+      setCategoryMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "ลบประเภทเหตุการณ์ไม่สำเร็จ",
+      });
+    }
+  }
+
+  const categories = useMemo(() => {
+    const itemCats = items.map((item) => item.category).filter(Boolean);
+    return Array.from(new Set([...systemCategories, ...itemCats])).sort((left, right) =>
+      left.localeCompare(right, "th"),
+    );
+  }, [items, systemCategories]);
 
   const monthOptions = useMemo(
     () =>
@@ -566,184 +651,289 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
           </article>
         </section>
 
-        <section className="media-library-panel" aria-labelledby="media-library-title">
-          <div className="library-heading">
-            <div className="panel-heading-main">
-              <span className="panel-icon"><FileImage size={21} /></span>
-              <span>
-                <h2 id="media-library-title">คลังสื่อทั้งหมด</h2>
-                <p>ค้นหา ย้อนดู แก้ไข และติดตามประวัติสื่อได้จากที่เดียว</p>
-              </span>
-            </div>
-            <div className="library-heading-actions">
-              {source === "demo" && <span className="demo-label">ข้อมูลตัวอย่าง</span>}
-              <button type="button" onClick={() => void loadItems()} disabled={itemsLoading}>
-                <RefreshCw className={itemsLoading ? "spin" : ""} size={16} /> โหลดข้อมูลใหม่
-              </button>
-            </div>
-          </div>
+        <nav className="admin-tab-nav" aria-label="เมนูระบบบริหารจัดการ">
+          <button
+            type="button"
+            className={activeTab === "library" ? "admin-tab-button is-active" : "admin-tab-button"}
+            onClick={() => setActiveTab("library")}
+          >
+            <FileImage size={18} />
+            <span>คลังสื่อทั้งหมด</span>
+            <span className="tab-badge">{items.length}</span>
+          </button>
+          <button
+            type="button"
+            className={activeTab === "settings" ? "admin-tab-button is-active" : "admin-tab-button"}
+            onClick={() => setActiveTab("settings")}
+          >
+            <ShieldCheck size={18} />
+            <span>จัดการข้อมูลพื้นฐาน</span>
+            <span className="tab-badge">{categories.length} ประเภท</span>
+          </button>
+        </nav>
 
-          {formMessage && !showUploadForm && (
-            <div className={`form-alert ${formMessage.type}`} role="status">
-              {formMessage.type === "success" ? <Check size={17} /> : <AlertTriangle size={17} />}
-              {formMessage.text}
-            </div>
-          )}
-
-          <div className="library-toolbar">
-            <label className="library-search">
-              <Search size={18} />
-              <span className="sr-only">ค้นหาสื่อ</span>
-              <input
-                value={mediaQuery}
-                onChange={(event) => {
-                  setMediaQuery(event.target.value);
-                  setMediaPage(1);
-                }}
-                placeholder="ค้นหาชื่อสื่อ พื้นที่ ประเภท คำค้น หรือผู้อัปโหลด"
-              />
-              {mediaQuery && (
-                <button type="button" onClick={() => { setMediaQuery(""); setMediaPage(1); }} aria-label="ล้างคำค้น">
-                  <X size={16} />
+        {activeTab === "library" ? (
+          <section className="media-library-panel" aria-labelledby="media-library-title">
+            <div className="library-heading">
+              <div className="panel-heading-main">
+                <span className="panel-icon"><FileImage size={21} /></span>
+                <span>
+                  <h2 id="media-library-title">คลังสื่อทั้งหมด</h2>
+                  <p>ค้นหา ย้อนดู แก้ไข และติดตามประวัติสื่อได้จากที่เดียว</p>
+                </span>
+              </div>
+              <div className="library-heading-actions">
+                {source === "demo" && <span className="demo-label">ข้อมูลตัวอย่าง</span>}
+                <button type="button" onClick={() => void loadItems()} disabled={itemsLoading}>
+                  <RefreshCw className={itemsLoading ? "spin" : ""} size={16} /> โหลดข้อมูลใหม่
                 </button>
-              )}
-            </label>
-            <div className="library-filter-grid">
-              <label>
-                <span>สถานะ</span>
-                <select value={mediaStatus} onChange={(event) => { setMediaStatus(event.target.value as MediaStatusFilter); setMediaPage(1); }}>
-                  <option value="all">ทุกสถานะ</option>
-                  <option value="published">เผยแพร่แล้ว</option>
-                  <option value="draft">ฉบับร่าง</option>
-                </select>
-              </label>
-              <label>
-                <span>ช่วงเหตุการณ์</span>
-                <select value={mediaPhase} onChange={(event) => { setMediaPhase(event.target.value as MediaPhaseFilter); setMediaPage(1); }}>
-                  <option value="all">ทุกช่วง</option>
-                  <option value="before">ก่อนเกิดเหตุ</option>
-                  <option value="during">ระหว่างเกิดเหตุ</option>
-                  <option value="after">หลังเกิดเหตุ</option>
-                </select>
-              </label>
-              <label>
-                <span>ประเภท</span>
-                <select value={mediaCategory} onChange={(event) => { setMediaCategory(event.target.value); setMediaPage(1); }}>
-                  <option value="all">ทุกประเภท</option>
-                  {categories.map((item) => <option key={item} value={item}>{item}</option>)}
-                </select>
-              </label>
-              <label>
-                <span>เดือนย้อนหลัง</span>
-                <select value={mediaMonth} onChange={(event) => { setMediaMonth(event.target.value); setMediaPage(1); }}>
-                  <option value="all">ทุกเดือน</option>
-                  {monthOptions.map((item) => <option key={item} value={item}>{formatMonthLabel(item)}</option>)}
-                </select>
-              </label>
-              <label>
-                <span>เรียงลำดับ</span>
-                <select value={mediaSort} onChange={(event) => { setMediaSort(event.target.value as MediaSort); setMediaPage(1); }}>
-                  <option value="created-desc">อัปโหลดล่าสุดก่อน</option>
-                  <option value="created-asc">อัปโหลดเก่าสุดก่อน</option>
-                  <option value="event-desc">เหตุการณ์ล่าสุดก่อน</option>
-                  <option value="event-asc">เหตุการณ์เก่าสุดก่อน</option>
-                  <option value="title">ชื่อ ก-ฮ</option>
-                </select>
-              </label>
+              </div>
             </div>
-          </div>
 
-          <div className="library-result-row">
-            <p>
-              แสดง <strong>{filteredItems.length}</strong> จาก {items.length} รายการ
-              {mediaPageCount > 1 && <> • หน้า {activeMediaPage} จาก {mediaPageCount}</>}
-            </p>
-            {hasActiveMediaFilters && (
-              <button type="button" onClick={resetMediaFilters}><RotateCcw size={15} /> ล้างตัวกรอง</button>
+            {formMessage && !showUploadForm && (
+              <div className={`form-alert ${formMessage.type}`} role="status">
+                {formMessage.type === "success" ? <Check size={17} /> : <AlertTriangle size={17} />}
+                {formMessage.text}
+              </div>
             )}
-          </div>
 
-          {itemsLoading ? (
-            <div className="media-library-list library-inline-skeleton" aria-label="กำลังโหลดรายการสื่อ">
-              {[0, 1, 2, 3].map((item) => (
-                <article className="media-library-item" key={item}>
-                  <span className="skeleton-block library-skeleton-thumb" />
-                  <div className="library-skeleton-copy"><span className="skeleton-block" /><span className="skeleton-block" /><span className="skeleton-block" /></div>
-                  <span className="skeleton-block library-skeleton-date" />
-                  <div className="library-skeleton-actions"><span className="skeleton-block" /><span className="skeleton-block" /></div>
-                </article>
-              ))}
+            <div className="library-toolbar">
+              <label className="library-search">
+                <Search size={18} />
+                <span className="sr-only">ค้นหาสื่อ</span>
+                <input
+                  value={mediaQuery}
+                  onChange={(event) => {
+                    setMediaQuery(event.target.value);
+                    setMediaPage(1);
+                  }}
+                  placeholder="ค้นหาชื่อสื่อ พื้นที่ ประเภท คำค้น หรือผู้อัปโหลด"
+                />
+                {mediaQuery && (
+                  <button type="button" onClick={() => { setMediaQuery(""); setMediaPage(1); }} aria-label="ล้างคำค้น">
+                    <X size={16} />
+                  </button>
+                )}
+              </label>
+              <div className="library-filter-grid">
+                <label>
+                  <span>สถานะ</span>
+                  <select value={mediaStatus} onChange={(event) => { setMediaStatus(event.target.value as MediaStatusFilter); setMediaPage(1); }}>
+                    <option value="all">ทุกสถานะ</option>
+                    <option value="published">เผยแพร่แล้ว</option>
+                    <option value="draft">ฉบับร่าง</option>
+                  </select>
+                </label>
+                <label>
+                  <span>ช่วงเหตุการณ์</span>
+                  <select value={mediaPhase} onChange={(event) => { setMediaPhase(event.target.value as MediaPhaseFilter); setMediaPage(1); }}>
+                    <option value="all">ทุกช่วง</option>
+                    <option value="before">ก่อนเกิดเหตุ</option>
+                    <option value="during">ระหว่างเกิดเหตุ</option>
+                    <option value="after">หลังเกิดเหตุ</option>
+                  </select>
+                </label>
+                <label>
+                  <span>ประเภท</span>
+                  <select value={mediaCategory} onChange={(event) => { setMediaCategory(event.target.value); setMediaPage(1); }}>
+                    <option value="all">ทุกประเภท</option>
+                    {categories.map((item) => <option key={item} value={item}>{item}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span>เดือนย้อนหลัง</span>
+                  <select value={mediaMonth} onChange={(event) => { setMediaMonth(event.target.value); setMediaPage(1); }}>
+                    <option value="all">ทุกเดือน</option>
+                    {monthOptions.map((item) => <option key={item} value={item}>{formatMonthLabel(item)}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span>เรียงลำดับ</span>
+                  <select value={mediaSort} onChange={(event) => { setMediaSort(event.target.value as MediaSort); setMediaPage(1); }}>
+                    <option value="created-desc">อัปโหลดล่าสุดก่อน</option>
+                    <option value="created-asc">อัปโหลดเก่าสุดก่อน</option>
+                    <option value="event-desc">เหตุการณ์ล่าสุดก่อน</option>
+                    <option value="event-asc">เหตุการณ์เก่าสุดก่อน</option>
+                    <option value="title">ชื่อ ก-ฮ</option>
+                  </select>
+                </label>
+              </div>
             </div>
-          ) : itemsLoadError ? (
-            <div className="library-empty error">
-              <AlertTriangle size={25} />
-              <h3>โหลดคลังสื่อไม่สำเร็จ</h3>
-              <p>{itemsLoadError}</p>
-              <button type="button" onClick={() => void loadItems()}><RefreshCw size={16} /> ลองอีกครั้ง</button>
+
+            <div className="library-result-row">
+              <p>
+                แสดง <strong>{filteredItems.length}</strong> จาก {items.length} รายการ
+                {mediaPageCount > 1 && <> • หน้า {activeMediaPage} จาก {mediaPageCount}</>}
+              </p>
+              {hasActiveMediaFilters && (
+                <button type="button" onClick={resetMediaFilters}><RotateCcw size={15} /> ล้างตัวกรอง</button>
+              )}
             </div>
-          ) : visibleMediaItems.length ? (
-            <div className="media-library-list">
-              {visibleMediaItems.map((item) => (
-                <article className="media-library-item" key={item.id}>
-                  <div className={`library-thumbnail thumb-${item.phase}`}>
-                    {item.thumbnailUrl ? (
-                      <img src={item.thumbnailUrl} alt="" aria-hidden="true" />
-                    ) : item.fileType.includes("pdf") ? (
-                      <FileText size={24} />
-                    ) : (
-                      <FileImage size={24} />
-                    )}
-                    <span>{item.fileType.includes("pdf") ? "PDF" : "ภาพ"}</span>
+
+            {itemsLoading ? (
+              <div className="media-library-list library-inline-skeleton" aria-label="กำลังโหลดรายการสื่อ">
+                {[0, 1, 2, 3].map((item) => (
+                  <article className="media-library-item" key={item}>
+                    <span className="skeleton-block library-skeleton-thumb" />
+                    <div className="library-skeleton-copy"><span className="skeleton-block" /><span className="skeleton-block" /><span className="skeleton-block" /></div>
+                    <span className="skeleton-block library-skeleton-date" />
+                    <div className="library-skeleton-actions"><span className="skeleton-block" /><span className="skeleton-block" /></div>
+                  </article>
+                ))}
+              </div>
+            ) : itemsLoadError ? (
+              <div className="library-empty error">
+                <AlertTriangle size={25} />
+                <h3>โหลดคลังสื่อไม่สำเร็จ</h3>
+                <p>{itemsLoadError}</p>
+                <button type="button" onClick={() => void loadItems()}><RefreshCw size={16} /> ลองอีกครั้ง</button>
+              </div>
+            ) : visibleMediaItems.length ? (
+              <div className="media-library-list">
+                {visibleMediaItems.map((item) => (
+                  <article className="media-library-item" key={item.id}>
+                    <div className={`library-thumbnail thumb-${item.phase}`}>
+                      {item.thumbnailUrl ? (
+                        <img src={item.thumbnailUrl} alt="" aria-hidden="true" />
+                      ) : item.fileType.includes("pdf") ? (
+                        <FileText size={24} />
+                      ) : (
+                        <FileImage size={24} />
+                      )}
+                      <span>{item.fileType.includes("pdf") ? "PDF" : "ภาพ"}</span>
+                    </div>
+                    <div className="library-item-main">
+                      <div className="library-item-title-row">
+                        <h3>{item.title}</h3>
+                        <span className={`library-status ${item.status}`}>
+                          {item.status === "published" ? "เผยแพร่แล้ว" : "ฉบับร่าง"}
+                        </span>
+                      </div>
+                      <p>{item.category} • {phaseLabels[item.phase]} • {item.location}</p>
+                      <div className="library-item-meta">
+                        <span><CalendarDays size={13} /> เหตุการณ์ {formatThaiDate(item.eventDate)}</span>
+                        {item.uploadedBy && <span>โดย {item.uploadedBy}</span>}
+                        {item.revisionCount ? <span>แก้ไข {item.revisionCount} ครั้ง</span> : null}
+                      </div>
+                    </div>
+                    <div className="library-created-date">
+                      <small>อัปโหลดเมื่อ</small>
+                      <strong>{formatThaiDateTime(item.createdAt)}</strong>
+                    </div>
+                    <div className="manager-actions library-actions">
+                      <button type="button" disabled={!status?.connected || source === "demo"} onClick={() => setEditing(item)} aria-label={`แก้ไข ${item.title}`} title="แก้ไขข้อมูล"><Pencil size={15} /><span>แก้ไข</span></button>
+                      <button type="button" disabled={!status?.connected || source === "demo"} onClick={() => void openHistory(item)} aria-label={`ดูประวัติ ${item.title}`} title="ประวัติการแก้ไข"><History size={15} /><span>ประวัติ</span></button>
+                      {isManagerRole(currentUser.role) && (
+                        <button className="delete-action" type="button" disabled={!status?.connected || source === "demo"} onClick={() => void deleteItem(item)} aria-label={`ลบ ${item.title}`} title="ลบรายการ"><Trash2 size={15} /><span>ลบ</span></button>
+                      )}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="library-empty">
+                <Search size={27} />
+                <h3>ไม่พบสื่อที่ตรงกับเงื่อนไข</h3>
+                <p>ลองเปลี่ยนคำค้น เดือน หรือประเภทเหตุการณ์</p>
+                {hasActiveMediaFilters && <button type="button" onClick={resetMediaFilters}><RotateCcw size={16} /> ดูสื่อทั้งหมด</button>}
+              </div>
+            )}
+
+            {filteredItems.length > MEDIA_PAGE_SIZE && (
+              <nav className="library-pagination" aria-label="หน้ารายการสื่อ">
+                <button type="button" onClick={() => setMediaPage((current) => Math.max(1, current - 1))} disabled={activeMediaPage === 1}>
+                  <ChevronLeft size={17} /> ก่อนหน้า
+                </button>
+                <span>หน้า <strong>{activeMediaPage}</strong> / {mediaPageCount}</span>
+                <button type="button" onClick={() => setMediaPage((current) => Math.min(mediaPageCount, current + 1))} disabled={activeMediaPage === mediaPageCount}>
+                  ถัดไป <ChevronRight size={17} />
+                </button>
+              </nav>
+            )}
+          </section>
+        ) : (
+          <section className="basic-settings-panel" aria-label="จัดการข้อมูลพื้นฐาน">
+            <div className="panel-heading">
+              <div className="panel-heading-main">
+                <span className="panel-icon"><ShieldCheck size={22} /></span>
+                <span>
+                  <h2>จัดการข้อมูลพื้นฐานและการตั้งค่าระบบ</h2>
+                  <p>กำหนดประเภทเหตุการณ์ ข้อมูลระบบ และตรวจสอบสถานะระบบก่อนใช้งาน</p>
+                </span>
+              </div>
+            </div>
+
+            <div className="basic-settings-grid">
+              <article className="settings-card">
+                <div className="settings-card-head">
+                  <span className="card-icon"><Plus size={20} /></span>
+                  <div>
+                    <h3>จัดการประเภทเหตุการณ์</h3>
+                    <p>เพิ่มประเภทเหตุการณ์ใหม่เพื่อนำไปใช้ในฟอร์มสื่อและตัวกรอง</p>
                   </div>
-                  <div className="library-item-main">
-                    <div className="library-item-title-row">
-                      <h3>{item.title}</h3>
-                      <span className={`library-status ${item.status}`}>
-                        {item.status === "published" ? "เผยแพร่แล้ว" : "ฉบับร่าง"}
+                </div>
+
+                <form onSubmit={handleAddCategory} className="add-category-form">
+                  <input
+                    value={newCategoryName}
+                    onChange={(event) => setNewCategoryName(event.target.value)}
+                    placeholder="เช่น วาตภัย, ดินโคลนถล่ม, ภัยแล้ง"
+                    disabled={addingCategory}
+                  />
+                  <button type="submit" disabled={addingCategory || !newCategoryName.trim()}>
+                    {addingCategory ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}
+                    เพิ่มประเภท
+                  </button>
+                </form>
+
+                {categoryMessage && (
+                  <div className={`form-alert ${categoryMessage.type}`} style={{ marginTop: 12 }}>
+                    {categoryMessage.type === "success" ? <Check size={16} /> : <AlertTriangle size={16} />}
+                    {categoryMessage.text}
+                  </div>
+                )}
+
+                <div className="category-tags-list">
+                  {categories.map((cat) => {
+                    const isDefault = DEFAULT_CATEGORIES.includes(cat);
+                    const count = items.filter((item) => item.category === cat).length;
+                    return (
+                      <span key={cat} className={isDefault ? "category-tag-chip is-default" : "category-tag-chip"}>
+                        <span>{cat}</span>
+                        <small style={{ opacity: 0.75, fontSize: "12px" }}>({count})</small>
+                        {!isDefault && (
+                          <button
+                            type="button"
+                            className="chip-remove-btn"
+                            onClick={() => void handleDeleteCategory(cat)}
+                            title={`ลบ ${cat}`}
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
                       </span>
-                    </div>
-                    <p>{item.category} • {phaseLabels[item.phase]} • {item.location}</p>
-                    <div className="library-item-meta">
-                      <span><CalendarDays size={13} /> เหตุการณ์ {formatThaiDate(item.eventDate)}</span>
-                      {item.uploadedBy && <span>โดย {item.uploadedBy}</span>}
-                      {item.revisionCount ? <span>แก้ไข {item.revisionCount} ครั้ง</span> : null}
-                    </div>
-                  </div>
-                  <div className="library-created-date">
-                    <small>อัปโหลดเมื่อ</small>
-                    <strong>{formatThaiDateTime(item.createdAt)}</strong>
-                  </div>
-                  <div className="manager-actions library-actions">
-                    <button type="button" disabled={!status?.connected || source === "demo"} onClick={() => setEditing(item)} aria-label={`แก้ไข ${item.title}`} title="แก้ไขข้อมูล"><Pencil size={15} /><span>แก้ไข</span></button>
-                    <button type="button" disabled={!status?.connected || source === "demo"} onClick={() => void openHistory(item)} aria-label={`ดูประวัติ ${item.title}`} title="ประวัติการแก้ไข"><History size={15} /><span>ประวัติ</span></button>
-                    {isManagerRole(currentUser.role) && (
-                      <button className="delete-action" type="button" disabled={!status?.connected || source === "demo"} onClick={() => void deleteItem(item)} aria-label={`ลบ ${item.title}`} title="ลบรายการ"><Trash2 size={15} /><span>ลบ</span></button>
-                    )}
-                  </div>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div className="library-empty">
-              <Search size={27} />
-              <h3>ไม่พบสื่อที่ตรงกับเงื่อนไข</h3>
-              <p>ลองเปลี่ยนคำค้น เดือน หรือประเภทเหตุการณ์</p>
-              {hasActiveMediaFilters && <button type="button" onClick={resetMediaFilters}><RotateCcw size={16} /> ดูสื่อทั้งหมด</button>}
-            </div>
-          )}
+                    );
+                  })}
+                </div>
+              </article>
 
-          {filteredItems.length > MEDIA_PAGE_SIZE && (
-            <nav className="library-pagination" aria-label="หน้ารายการสื่อ">
-              <button type="button" onClick={() => setMediaPage((current) => Math.max(1, current - 1))} disabled={activeMediaPage === 1}>
-                <ChevronLeft size={17} /> ก่อนหน้า
-              </button>
-              <span>หน้า <strong>{activeMediaPage}</strong> / {mediaPageCount}</span>
-              <button type="button" onClick={() => setMediaPage((current) => Math.min(mediaPageCount, current + 1))} disabled={activeMediaPage === mediaPageCount}>
-                ถัดไป <ChevronRight size={17} />
-              </button>
-            </nav>
-          )}
-        </section>
+              <article className="settings-card">
+                <div className="settings-card-head">
+                  <span className="card-icon"><FolderCheck size={20} /></span>
+                  <div>
+                    <h3>สถานะระบบและ Google Integration</h3>
+                    <p>พื้นที่เก็บข้อมูลสื่อและฐานข้อมูลของหน่วยงาน</p>
+                  </div>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: 14 }}>
+                  <div><strong>Google Drive Folder:</strong> {status?.folderName || "คลังสื่อสารความเสี่ยง สสจ.สตูล"}</div>
+                  <div><strong>Google Sheet:</strong> {status?.sheetName || "ฐานข้อมูลคลังสื่อสารความเสี่ยง สสจ.สตูล"}</div>
+                  <div><strong>สถานะการเชื่อมต่อ:</strong> {status?.connected ? "พร้อมใช้งาน ✅" : "กำลังตรวจสอบการเชื่อมต่อ ⚠️"}</div>
+                </div>
+              </article>
+            </div>
+          </section>
+        )}
 
         {showUploadForm && (
           <section className="upload-panel admin-upload-panel" id="upload-media">
@@ -794,9 +984,10 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                     </select>
                   </label>
                   <label>ประเภทเหตุการณ์ <em>*</em>
-                    <select name="category" defaultValue="น้ำท่วม">
-                      <option>น้ำท่วม</option><option>โรคติดต่อ</option><option>หมอกควัน</option>
-                      <option>อุบัติเหตุ</option><option>ฟื้นฟูหลังเหตุ</option><option>อื่นๆ</option>
+                    <select name="category" defaultValue={categories[0] || "น้ำท่วม"}>
+                      {categories.map((cat) => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
                     </select>
                   </label>
                   <label>วันที่เหตุการณ์ <em>*</em><input type="date" name="eventDate" required /></label>
@@ -839,7 +1030,13 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                     <option value="after">หลังเกิดเหตุ</option>
                   </select>
                 </label>
-                <label>ประเภทเหตุการณ์ <em>*</em><input name="category" required defaultValue={editing.category} /></label>
+                <label>ประเภทเหตุการณ์ <em>*</em>
+                  <select name="category" defaultValue={editing.category}>
+                    {categories.map((cat) => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </label>
                 <label>วันที่เหตุการณ์ <em>*</em><input type="date" name="eventDate" required defaultValue={editing.eventDate} /></label>
                 <label>พื้นที่ <em>*</em><input name="location" required defaultValue={editing.location} /></label>
                 <label className="field-wide">คำอธิบาย <em>*</em><textarea name="description" rows={4} required defaultValue={editing.description} /></label>

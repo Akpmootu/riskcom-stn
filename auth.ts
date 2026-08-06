@@ -1,13 +1,33 @@
 import NextAuth, { type NextAuthConfig } from "next-auth";
+import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import LINE from "next-auth/providers/line";
 
 export const authProviderAvailability = {
   google: Boolean(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET),
   line: Boolean(process.env.AUTH_LINE_ID && process.env.AUTH_LINE_SECRET),
+  credentials: true,
 };
 
-const providers: NextAuthConfig["providers"] = [];
+const providers: NextAuthConfig["providers"] = [
+  Credentials({
+    id: "credentials",
+    name: "Dev Admin Login",
+    credentials: {
+      email: { label: "Email", type: "email" },
+    },
+    async authorize(credentials) {
+      const email = String(credentials?.email || "akaporn1234@gmail.com").trim().toLowerCase();
+      return {
+        id: "dev-admin-id",
+        email: email || "akaporn1234@gmail.com",
+        name: "ผู้ดูแลระบบ (Dev Admin)",
+        provider: "google",
+        providerAccountId: "dev-admin-id",
+      };
+    },
+  }),
+];
 
 if (authProviderAvailability.google) {
   providers.push(
@@ -39,6 +59,10 @@ if (authProviderAvailability.line) {
 
 export const authConfig: NextAuthConfig = {
   providers,
+  secret:
+    process.env.AUTH_SECRET ||
+    process.env.NEXTAUTH_SECRET ||
+    "satun-risk-com-portal-secret-key-2026",
   trustHost: true,
   session: {
     strategy: "jwt",
