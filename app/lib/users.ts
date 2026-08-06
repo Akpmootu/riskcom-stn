@@ -70,9 +70,13 @@ export async function getPortalUser(
         role: "super_admin",
         status: "approved",
         provider: "google",
+        providerAccountId: identity.providerAccountId || "dev-admin-id",
+        lineUserId: "",
+        imageUrl: identity.image || "",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         approvedAt: new Date().toISOString(),
+        approvedBy: SUPER_ADMIN_EMAIL,
       };
     }
     throw error;
