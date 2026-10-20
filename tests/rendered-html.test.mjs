@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
-async function render() {
+async function render(path = "/", method = "GET") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
 
   return worker.fetch(
-    new Request("http://localhost/", {
+    new Request(`http://localhost${path}`, {
+      method,
       headers: { accept: "text/html" },
     }),
     {
@@ -47,6 +48,25 @@ test("server-renders an accessible gallery loading skeleton", async () => {
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
 
+test("renders public API documentation and exposes CORS preflight", async () => {
+  const pageResponse = await render("/developers");
+  assert.equal(pageResponse.status, 200);
+  const html = await pageResponse.text();
+  assert.match(html, /Satun Risk Media API/);
+  assert.match(html, /GET \/api\/v1\/media/);
+  assert.match(html, /Query parameters/);
+  assert.match(html, /thumbnailUrl/);
+
+  const optionsResponse = await render("/api/v1/media", "OPTIONS");
+  assert.equal(optionsResponse.status, 204);
+  assert.equal(optionsResponse.headers.get("access-control-allow-origin"), "*");
+  assert.match(
+    optionsResponse.headers.get("access-control-allow-methods") ?? "",
+    /GET/,
+  );
+  assert.equal(optionsResponse.headers.get("x-api-version"), "1.0");
+});
+
 test("includes responsive media management, Kanit, system skeletons, and existing platform features", async () => {
   const [
     gallery,
@@ -60,6 +80,10 @@ test("includes responsive media management, Kanit, system skeletons, and existin
     packageJson,
     appsScript,
     publicAppsScript,
+    publicMediaApi,
+    publicMediaListRoute,
+    publicMediaDetailRoute,
+    developerPage,
   ] = await Promise.all([
     readFile(new URL("../app/media-gallery.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/media-cache.ts", import.meta.url), "utf8"),
@@ -78,6 +102,10 @@ test("includes responsive media management, Kanit, system skeletons, and existin
       "utf8",
     ),
     readFile(new URL("../public/google-apps-script.gs", import.meta.url), "utf8"),
+    readFile(new URL("../app/lib/public-media-api.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/v1/media/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/v1/media/[id]/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/developers/page.tsx", import.meta.url), "utf8"),
   ]);
 
   assert.match(gallery, /className="mobile-bottom-nav"/);
@@ -88,6 +116,7 @@ test("includes responsive media management, Kanit, system skeletons, and existin
   assert.match(gallery, /\/api\/media\?refresh=/);
   assert.match(gallery, /ข้อมูลจากแคชในเครื่อง/);
   assert.match(gallery, /\/api\/analytics\/view/);
+  assert.match(gallery, /API สำหรับนักพัฒนา/);
   assert.match(mediaCache, /MEDIA_CACHE_MAX_AGE_MS = 10 \* 60 \* 1000/);
   assert.match(mediaCache, /window\.localStorage\.getItem/);
   assert.match(mediaCache, /response\.source === "google"/);
@@ -113,6 +142,16 @@ test("includes responsive media management, Kanit, system skeletons, and existin
   assert.match(css, /\.media-library-panel/);
   assert.match(css, /@keyframes skeleton/);
   assert.match(css, /\.admin-edit-modal/);
+  assert.match(css, /\.developer-page/);
+  assert.match(publicMediaApi, /access-control-allow-origin/);
+  assert.match(publicMediaApi, /s-maxage=300/);
+  assert.match(publicMediaApi, /revalidate: 300/);
+  assert.match(publicMediaApi, /MAX_PAGE_SIZE = 100/);
+  assert.match(publicMediaApi, /item\.status === "published"/);
+  assert.match(publicMediaListRoute, /parsePublicMediaQuery/);
+  assert.match(publicMediaListRoute, /pagination/);
+  assert.match(publicMediaDetailRoute, /MEDIA_NOT_FOUND/);
+  assert.match(developerPage, /โดยไม่ต้องใช้ API Key/);
   assert.match(appsScript, /MEDIA_HISTORY_SHEET_NAME = "media_edit_logs"/);
   assert.match(appsScript, /SITE_STATS_SHEET_NAME = "site_stats"/);
   assert.match(appsScript, /function updateMedia_/);
