@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowDownToLine,
   ArrowRight,
+  Braces,
   CalendarDays,
   Check,
   ChevronRight,
@@ -865,6 +866,7 @@ export function MediaGallery() {
                 </>
               )}
             </span>
+            <a href="/developers">API สำหรับนักพัฒนา <Braces size={15} /></a>
             <a href="/admin">เข้าสู่ระบบผู้ดูแล <ArrowRight size={15} /></a>
           </div>
         </div>
