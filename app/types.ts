@@ -1,5 +1,14 @@
 export type IncidentPhase = "before" | "during" | "after";
 
+export type MediaSlide = {
+  id: string;
+  thumbnailUrl?: string;
+  downloadUrl?: string;
+  driveFileId?: string;
+  fileName: string;
+  fileType: string;
+};
+
 export type MediaItem = {
   id: string;
   title: string;
@@ -21,6 +30,7 @@ export type MediaItem = {
   updatedAt?: string;
   updatedBy?: string;
   revisionCount?: number;
+  gallery?: MediaSlide[];
 };
 
 export type MediaResponse = {
@@ -43,4 +53,8 @@ export type VisitorStats = {
   totalViews: number;
   todayViews: number;
   updatedAt: string;
+};
+
+export type SiteStatsResponse = {
+  stats: VisitorStats;
 };

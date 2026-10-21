@@ -1,9 +1,14 @@
+import {
+  encodeGalleryKeyword,
+  normalizeMediaItem,
+  normalizeMediaItems,
+} from "@/app/lib/media-gallery-utils";
 import { json, postToGoogle } from "@/app/lib/server";
 import {
   portalErrorResponse,
   requireApprovedPortalUser,
 } from "@/app/lib/users";
-import type { MediaItem } from "@/app/types";
+import type { MediaItem, MediaSlide } from "@/app/types";
 
 export const dynamic = "force-dynamic";
 
@@ -14,12 +19,7 @@ async function mediaForUser() {
     throw new Error(String(result.error || "ไม่สามารถโหลดรายการสื่อได้"));
   }
 
-  const rawItems = result.items as Array<MediaItem & { status?: string }>;
-  const items = rawItems.filter(
-    (item) =>
-      Boolean(item && item.id) &&
-      String(item.status || "").toLowerCase() !== "deleted",
-  ) as MediaItem[];
+  const items = normalizeMediaItems(result.items, ["published", "draft"]);
 
   if (user.role === "uploader") {
     return {
@@ -46,7 +46,10 @@ export async function GET() {
 export async function PATCH(request: Request) {
   try {
     const { user, items } = await mediaForUser();
-    const body = (await request.json()) as Partial<MediaItem> & { id?: string };
+    const body = (await request.json()) as Partial<MediaItem> & {
+      id?: string;
+      extraSlides?: MediaSlide[];
+    };
     const current = items.find((item) => item.id === body.id);
     if (!current) {
       return json(
@@ -54,6 +57,24 @@ export async function PATCH(request: Request) {
         { status: 404 },
       );
     }
+
+    const userKeywords = Array.isArray(body.keywords)
+      ? body.keywords
+          .map(String)
+          .map((item) => item.trim())
+          .filter((item) => Boolean(item) && !item.startsWith("__gallery__:"))
+      : [];
+
+    const extraSlides = Array.isArray(body.extraSlides)
+      ? body.extraSlides
+      : Array.isArray(current.gallery) && current.gallery.length > 1
+        ? current.gallery.slice(1)
+        : [];
+
+    const galleryToken = encodeGalleryKeyword(extraSlides);
+    const finalKeywords = galleryToken
+      ? [...userKeywords, galleryToken]
+      : userKeywords;
 
     const result = await postToGoogle({
       action: "updateMedia",
@@ -64,9 +85,7 @@ export async function PATCH(request: Request) {
       category: String(body.category || "").trim(),
       eventDate: String(body.eventDate || ""),
       location: String(body.location || "").trim(),
-      keywords: Array.isArray(body.keywords)
-        ? body.keywords.map(String).map((item) => item.trim()).filter(Boolean)
-        : [],
+      keywords: finalKeywords,
       altText: String(body.altText || "").trim(),
       status: body.status === "draft" ? "draft" : "published",
       editedBy: user.email,
@@ -74,7 +93,16 @@ export async function PATCH(request: Request) {
     if (!result.ok) {
       throw new Error(String(result.error || "แก้ไขข้อมูลสื่อไม่สำเร็จ"));
     }
-    return json(result);
+
+    const normalizedItem =
+      result.item && typeof result.item === "object"
+        ? normalizeMediaItem(result.item as Partial<MediaItem> & { status?: string })
+        : null;
+
+    return json({
+      ...result,
+      item: normalizedItem ?? result.item,
+    });
   } catch (error) {
     return portalErrorResponse(error);
   }

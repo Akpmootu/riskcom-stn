@@ -19,11 +19,13 @@ import {
   HeartPulse,
   History,
   Home,
+  Images,
   Info,
   Link2,
   LoaderCircle,
   LogOut,
   MapPin,
+  Maximize2,
   Menu,
   MoreVertical,
   Pencil,
@@ -35,6 +37,7 @@ import {
   Share2,
   ShieldCheck,
   Sparkles,
+  Star,
   Trash2,
   Upload,
   UserRound,
@@ -45,15 +48,26 @@ import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { isManagerRole, type PortalUser } from "../auth-types";
+import {
+  getMediaSlides,
+  normalizeMediaItems,
+} from "../lib/media-gallery-utils";
 import { clearMediaCache } from "../media-cache";
 import type {
   IncidentPhase,
   MediaItem,
   MediaResponse,
   MediaRevision,
+  MediaSlide,
   VisitorStats,
 } from "../types";
 import { AdminDashboardSkeleton } from "./admin-skeleton";
+
+type QueuedUploadFile = {
+  id: string;
+  file: File;
+  previewUrl: string;
+};
 
 type ConnectionStatus = {
   ok: boolean;
@@ -238,10 +252,11 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [mediaSort, setMediaSort] = useState<MediaSort>("created-desc");
   const [mediaPage, setMediaPage] = useState(1);
 
-  // Popup Upload Modal & AI Auto-Fill State
+  // Popup Upload Modal & AI Auto-Fill State (Supports Multiple Images)
   const [showUploadForm, setShowUploadForm] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState("");
+  const [uploadFiles, setUploadFiles] = useState<QueuedUploadFile[]>([]);
+  const [activeUploadSlide, setActiveUploadSlide] = useState(0);
+  const [uploadProgressText, setUploadProgressText] = useState("");
   const [uploading, setUploading] = useState(false);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
   const [aiStatusMessage, setAiStatusMessage] = useState<{
@@ -261,7 +276,11 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [formMessage, setFormMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState<MediaItem | null>(null);
+  const [editExtraSlides, setEditExtraSlides] = useState<MediaSlide[]>([]);
+  const [editNewFiles, setEditNewFiles] = useState<QueuedUploadFile[]>([]);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [previewItem, setPreviewItem] = useState<MediaItem | null>(null);
+  const [previewSlideIndex, setPreviewSlideIndex] = useState(0);
   const [historyItem, setHistoryItem] = useState<MediaItem | null>(null);
   const [historyEntries, setHistoryEntries] = useState<MediaRevision[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -274,6 +293,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [categoryMessage, setCategoryMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const fileInput = useRef<HTMLInputElement>(null);
+  const editFileInput = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -287,12 +307,6 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     });
     // Initial portal data is intentionally loaded once for the authenticated user.
   }, []);
-
-  useEffect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    };
-  }, [previewUrl]);
 
   async function loadVisitorStats() {
     try {
@@ -472,17 +486,27 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     setItemsLoading(true);
     setItemsLoadError("");
     try {
-      const response = await fetch("/api/admin/media", { cache: "no-store" });
+      const response = await fetch(`/api/admin/media?t=${Date.now()}`, { cache: "no-store" });
       const result = (await response.json()) as MediaResponse & {
         error?: string;
       };
       if (!response.ok) {
         throw new Error(result.error || "โหลดรายการสื่อไม่สำเร็จ");
       }
-      const activeItems = (result.items || []).filter(
-        (item) =>
-          Boolean(item && item.id) &&
-          String((item as { status?: string }).status || "").toLowerCase() !== "deleted",
+      let deletedSet = new Set<string>();
+      try {
+        const rawDeleted = window.sessionStorage.getItem("satun-deleted-media-ids");
+        if (rawDeleted) {
+          const parsed = JSON.parse(rawDeleted) as unknown;
+          if (Array.isArray(parsed)) {
+            deletedSet = new Set(parsed.map(String));
+          }
+        }
+      } catch {
+        // Ignore session storage errors
+      }
+      const activeItems = normalizeMediaItems(result.items || [], ["published", "draft"]).filter(
+        (item) => !deletedSet.has(item.id),
       );
       setItems(activeItems);
       setSource(result.source);
@@ -520,9 +544,12 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   }
 
   function resetUploadFormFields() {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setFile(null);
-    setPreviewUrl("");
+    for (const entry of uploadFiles) {
+      if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
+    }
+    setUploadFiles([]);
+    setActiveUploadSlide(0);
+    setUploadProgressText("");
     setAiAnalyzing(false);
     setAiStatusMessage(null);
     setUploadTitle("");
@@ -534,6 +561,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     setUploadAltText("");
     setUploadKeywords("");
     setUploadStatus("published");
+    if (fileInput.current) fileInput.current.value = "";
   }
 
   async function analyzeFileWithAi(targetFile: File) {
@@ -593,39 +621,127 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     }
   }
 
-  function chooseFile(nextFile: File | null) {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    setFile(nextFile);
-    const nextPreview = nextFile?.type.startsWith("image/")
-      ? URL.createObjectURL(nextFile)
-      : "";
-    setPreviewUrl(nextPreview);
+  function addUploadFiles(incoming: FileList | File[] | null, replaceAll = false) {
+    const rawList = incoming ? Array.from(incoming).filter((entry) => entry && entry.size > 0) : [];
+    if (rawList.length === 0) return;
 
-    if (nextFile) {
-      void analyzeFileWithAi(nextFile);
+    const createdEntries: QueuedUploadFile[] = rawList.map((nextFile, idx) => ({
+      id: `${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 8)}`,
+      file: nextFile,
+      previewUrl: nextFile.type.startsWith("image/") ? URL.createObjectURL(nextFile) : "",
+    }));
+
+    const wasEmpty = replaceAll || uploadFiles.length === 0;
+    if (replaceAll) {
+      for (const oldEntry of uploadFiles) {
+        if (oldEntry.previewUrl) URL.revokeObjectURL(oldEntry.previewUrl);
+      }
+      setUploadFiles(createdEntries.slice(0, 15));
+      setActiveUploadSlide(0);
     } else {
-      setAiStatusMessage(null);
+      const merged = [...uploadFiles, ...createdEntries].slice(0, 15);
+      setUploadFiles(merged);
+      if (wasEmpty) {
+        setActiveUploadSlide(0);
+      } else {
+        setActiveUploadSlide(uploadFiles.length);
+      }
     }
+
+    if (wasEmpty && createdEntries[0]) {
+      void analyzeFileWithAi(createdEntries[0].file);
+    }
+    if (fileInput.current) fileInput.current.value = "";
+  }
+
+  function removeUploadFileAt(index: number) {
+    const target = uploadFiles[index];
+    if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+    const next = uploadFiles.filter((_, idx) => idx !== index);
+    setUploadFiles(next);
+    if (next.length === 0) {
+      setActiveUploadSlide(0);
+      setAiStatusMessage(null);
+    } else {
+      setActiveUploadSlide((prev) => Math.min(prev, next.length - 1));
+    }
+  }
+
+  function makeCoverUploadFile(index: number) {
+    if (index <= 0 || index >= uploadFiles.length) return;
+    const picked = uploadFiles[index];
+    const remaining = uploadFiles.filter((_, idx) => idx !== index);
+    setUploadFiles([picked, ...remaining]);
+    setActiveUploadSlide(0);
+  }
+
+  async function uploadSingleAttachment(targetFile: File, meta: { phase: string; category: string; eventDate: string; location: string }): Promise<MediaSlide> {
+    const attachmentForm = new FormData();
+    attachmentForm.set("mode", "attachment");
+    attachmentForm.set("file", targetFile);
+    attachmentForm.set("phase", meta.phase);
+    attachmentForm.set("category", meta.category);
+    attachmentForm.set("eventDate", meta.eventDate);
+    attachmentForm.set("location", meta.location);
+
+    const response = await fetch("/api/admin/upload", {
+      method: "POST",
+      body: attachmentForm,
+    });
+    const result = (await response.json()) as {
+      ok?: boolean;
+      slide?: MediaSlide;
+      error?: string;
+    };
+    if (!response.ok || !result.ok || !result.slide) {
+      throw new Error(result.error || `อัปโหลดไฟล์ "${targetFile.name}" ไม่สำเร็จ`);
+    }
+    return result.slide;
   }
 
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!file || !status?.connected) return;
-    const data = new FormData();
-    data.set("file", file);
-    data.set("title", uploadTitle.trim());
-    data.set("phase", uploadPhase);
-    data.set("category", uploadCategory);
-    data.set("eventDate", uploadEventDate);
-    data.set("location", uploadLocation.trim());
-    data.set("description", uploadDescription.trim());
-    data.set("altText", uploadAltText.trim());
-    data.set("keywords", uploadKeywords.trim());
-    data.set("status", uploadStatus);
+    if (uploadFiles.length === 0 || !status?.connected) return;
 
     setUploading(true);
     setFormMessage(null);
+    const totalCount = uploadFiles.length;
     try {
+      const extraSlides: MediaSlide[] = [];
+      if (totalCount > 1) {
+        for (let idx = 1; idx < totalCount; idx += 1) {
+          setUploadProgressText(`กำลังอัปโหลดรูปภาพที่ ${idx + 1} จาก ${totalCount}...`);
+          const slide = await uploadSingleAttachment(uploadFiles[idx].file, {
+            phase: uploadPhase,
+            category: uploadCategory,
+            eventDate: uploadEventDate,
+            location: uploadLocation.trim(),
+          });
+          extraSlides.push(slide);
+        }
+      }
+
+      setUploadProgressText(
+        totalCount > 1
+          ? `กำลังบันทึกภาพปกและรวมชุดสื่อ (${totalCount} รูปภาพ)...`
+          : "กำลังบันทึกลง Google...",
+      );
+
+      const data = new FormData();
+      data.set("file", uploadFiles[0].file);
+      if (extraSlides.length > 0) {
+        data.set("extraSlides", JSON.stringify(extraSlides));
+      }
+      data.set("title", uploadTitle.trim());
+      data.set("phase", uploadPhase);
+      data.set("category", uploadCategory);
+      data.set("eventDate", uploadEventDate);
+      data.set("location", uploadLocation.trim());
+      data.set("description", uploadDescription.trim());
+      data.set("altText", uploadAltText.trim());
+      data.set("keywords", uploadKeywords.trim());
+      data.set("status", uploadStatus);
+
       const response = await fetch("/api/admin/upload", {
         method: "POST",
         body: data,
@@ -637,7 +753,10 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       clearMediaCache();
       setFormMessage({
         type: "success",
-        text: "บันทึกไฟล์ใน Google Drive และเพิ่มข้อมูลใน Google Sheets เรียบร้อยแล้ว",
+        text:
+          totalCount > 1
+            ? `บันทึกชุดสื่อจำนวน ${totalCount} รูปภาพใน Google Drive และ Google Sheets เรียบร้อยแล้ว`
+            : "บันทึกไฟล์ใน Google Drive และเพิ่มข้อมูลใน Google Sheets เรียบร้อยแล้ว",
       });
       await loadItems();
       setMediaSort("created-desc");
@@ -649,22 +768,34 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       });
     } finally {
       setUploading(false);
+      setUploadProgressText("");
     }
   }
 
   async function deleteItem(item: MediaItem) {
     if (!status?.connected || !window.confirm(`ย้าย “${item.title}” ไปถังขยะหรือไม่`)) return;
     setFormMessage(null);
+    const slideIds = getMediaSlides(item)
+      .map((slide) => slide.id)
+      .filter(Boolean);
     try {
       const response = await fetch("/api/admin/delete", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id: item.id }),
+        body: JSON.stringify({ id: item.id, slideIds }),
       });
       const result = (await response.json()) as { ok?: boolean; error?: string };
       if (!response.ok || !result.ok) {
         setFormMessage({ type: "error", text: result.error || "ลบสื่อไม่สำเร็จ" });
         return;
+      }
+      try {
+        const rawDeleted = window.sessionStorage.getItem("satun-deleted-media-ids");
+        const existing = rawDeleted ? (JSON.parse(rawDeleted) as string[]) : [];
+        const updated = Array.from(new Set([...(Array.isArray(existing) ? existing : []), item.id, ...slideIds]));
+        window.sessionStorage.setItem("satun-deleted-media-ids", JSON.stringify(updated));
+      } catch {
+        // Ignore session storage errors
       }
       clearMediaCache();
       setItems((current) => current.filter((entry) => entry.id !== item.id));
@@ -680,6 +811,43 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     }
   }
 
+  function openEditModal(item: MediaItem) {
+    const slides = getMediaSlides(item);
+    setEditExtraSlides(slides.slice(1));
+    for (const oldFile of editNewFiles) {
+      if (oldFile.previewUrl) URL.revokeObjectURL(oldFile.previewUrl);
+    }
+    setEditNewFiles([]);
+    setEditing(item);
+  }
+
+  function closeEditModal() {
+    for (const oldFile of editNewFiles) {
+      if (oldFile.previewUrl) URL.revokeObjectURL(oldFile.previewUrl);
+    }
+    setEditNewFiles([]);
+    setEditExtraSlides([]);
+    setEditing(null);
+  }
+
+  function addEditFiles(incoming: FileList | File[] | null) {
+    const rawList = incoming ? Array.from(incoming).filter((entry) => entry && entry.size > 0) : [];
+    if (rawList.length === 0) return;
+    const created: QueuedUploadFile[] = rawList.map((nextFile, idx) => ({
+      id: `edit-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 7)}`,
+      file: nextFile,
+      previewUrl: nextFile.type.startsWith("image/") ? URL.createObjectURL(nextFile) : "",
+    }));
+    setEditNewFiles((current) => [...current, ...created].slice(0, 14));
+    if (editFileInput.current) editFileInput.current.value = "";
+  }
+
+  function removeEditNewFileAt(index: number) {
+    const target = editNewFiles[index];
+    if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+    setEditNewFiles((current) => current.filter((_, idx) => idx !== index));
+  }
+
   async function handleEdit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!editing || !status?.connected) return;
@@ -687,6 +855,24 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     setSavingEdit(true);
     setFormMessage(null);
     try {
+      const phaseValue = String(data.get("phase") || "before");
+      const categoryValue = String(data.get("category") || "");
+      const eventDateValue = String(data.get("eventDate") || "");
+      const locationValue = String(data.get("location") || "");
+
+      const uploadedNewSlides: MediaSlide[] = [];
+      for (const entry of editNewFiles) {
+        const slide = await uploadSingleAttachment(entry.file, {
+          phase: phaseValue,
+          category: categoryValue,
+          eventDate: eventDateValue,
+          location: locationValue,
+        });
+        uploadedNewSlides.push(slide);
+      }
+
+      const finalExtraSlides = [...editExtraSlides, ...uploadedNewSlides];
+
       const response = await fetch("/api/admin/media", {
         method: "PATCH",
         headers: { "content-type": "application/json" },
@@ -694,16 +880,17 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
           id: editing.id,
           title: String(data.get("title") || ""),
           description: String(data.get("description") || ""),
-          phase: String(data.get("phase") || "before"),
-          category: String(data.get("category") || ""),
-          eventDate: String(data.get("eventDate") || ""),
-          location: String(data.get("location") || ""),
+          phase: phaseValue,
+          category: categoryValue,
+          eventDate: eventDateValue,
+          location: locationValue,
           keywords: String(data.get("keywords") || "")
             .split(",")
             .map((item) => item.trim())
             .filter(Boolean),
           altText: String(data.get("altText") || ""),
           status: String(data.get("status") || "published"),
+          extraSlides: finalExtraSlides,
         }),
       });
       const result = (await response.json()) as {
@@ -720,7 +907,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
         ),
       );
       clearMediaCache();
-      setEditing(null);
+      closeEditModal();
       setFormMessage({
         type: "success",
         text: "บันทึกข้อมูลและประวัติการแก้ไขเรียบร้อยแล้ว",
@@ -797,12 +984,8 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   }
 
   function openMediaPreview(item: MediaItem) {
-    const targetUrl = item.downloadUrl || item.thumbnailUrl;
-    if (targetUrl) {
-      window.open(targetUrl, "_blank", "noopener,noreferrer");
-      return;
-    }
-    setEditing(item);
+    setPreviewItem(item);
+    setPreviewSlideIndex(0);
   }
 
   if (hydrating) return <AdminDashboardSkeleton />;
@@ -1150,78 +1333,109 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
               </div>
             ) : visibleMediaItems.length ? (
               <div className="media-library-list">
-                {visibleMediaItems.map((item) => (
-                  <article className="media-library-item" key={item.id}>
-                    <div className={`library-thumbnail thumb-${item.phase}`}>
-                      {item.thumbnailUrl ? (
-                        <img src={item.thumbnailUrl} alt="" aria-hidden="true" />
-                      ) : item.fileType.includes("pdf") ? (
-                        <FileText size={24} />
-                      ) : (
-                        <FileImage size={24} />
-                      )}
-                      {item.fileType.includes("pdf") && <span>PDF</span>}
-                    </div>
-                    <div className="library-item-main">
-                      <div className="library-item-title-row">
-                        <h3>{item.title}</h3>
-                        <span className={`library-status ${item.status}`}>
-                          {item.status === "published" ? "เผยแพร่แล้ว" : "ฉบับร่าง"}
-                        </span>
-                      </div>
-                      <p>{item.category} • {phaseLabels[item.phase]} • {item.location}</p>
-                      <div className="library-item-meta">
-                        <span><CalendarDays size={13} /> เหตุการณ์ {formatThaiDate(item.eventDate)}</span>
-                        {item.uploadedBy && <span><UserRound size={13} /> โดย {item.uploadedBy}</span>}
-                        {item.revisionCount ? <span>แก้ไข {item.revisionCount} ครั้ง</span> : null}
-                      </div>
-                    </div>
-                    <div className="library-created-date">
-                      <small>อัปโหลดเมื่อ</small>
-                      <strong>{formatThaiDateTime(item.createdAt)}</strong>
-                    </div>
-                    <div className="manager-actions library-actions">
-                      <button
-                        type="button"
-                        disabled={!status?.connected || source === "demo"}
-                        onClick={() => setEditing(item)}
-                        aria-label={`แก้ไข ${item.title}`}
-                        title="แก้ไขข้อมูล"
+                {visibleMediaItems.map((item) => {
+                  const itemSlides = getMediaSlides(item);
+                  return (
+                    <article className="media-library-item" key={item.id}>
+                      <div
+                        className={`library-thumbnail thumb-${item.phase}`}
+                        onClick={() => openMediaPreview(item)}
+                        role="button"
+                        tabIndex={0}
+                        title={
+                          itemSlides.length > 1
+                            ? `คลิกเพื่อเปิดดูชุดภาพ (${itemSlides.length} รูป)`
+                            : "คลิกเพื่อดูภาพขนาดใหญ่"
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openMediaPreview(item);
+                          }
+                        }}
                       >
-                        <Pencil size={15} />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!status?.connected || source === "demo"}
-                        onClick={() => void openHistory(item)}
-                        aria-label={`ดูประวัติ ${item.title}`}
-                        title="ประวัติการแก้ไข"
-                      >
-                        <BarChart2 size={15} />
-                      </button>
-                      {isManagerRole(currentUser.role) && (
+                        {item.thumbnailUrl ? (
+                          <img src={item.thumbnailUrl} alt="" aria-hidden="true" />
+                        ) : item.fileType.includes("pdf") ? (
+                          <FileText size={24} />
+                        ) : (
+                          <FileImage size={24} />
+                        )}
+                        {item.fileType.includes("pdf") && <span>PDF</span>}
+                        {itemSlides.length > 1 && (
+                          <span className="library-slide-count">
+                            <Images size={11} /> {itemSlides.length} ภาพ
+                          </span>
+                        )}
+                      </div>
+                      <div className="library-item-main">
+                        <div className="library-item-title-row">
+                          <h3 onClick={() => openMediaPreview(item)} style={{ cursor: "pointer" }}>
+                            {item.title}
+                          </h3>
+                          <span className={`library-status ${item.status}`}>
+                            {item.status === "published" ? "เผยแพร่แล้ว" : "ฉบับร่าง"}
+                          </span>
+                          {itemSlides.length > 1 && (
+                            <span className="library-multi-tag">
+                              <Images size={12} /> ชุดสื่อ {itemSlides.length} ภาพ
+                            </span>
+                          )}
+                        </div>
+                        <p>{item.category} • {phaseLabels[item.phase]} • {item.location}</p>
+                        <div className="library-item-meta">
+                          <span><CalendarDays size={13} /> เหตุการณ์ {formatThaiDate(item.eventDate)}</span>
+                          {item.uploadedBy && <span><UserRound size={13} /> โดย {item.uploadedBy}</span>}
+                          {item.revisionCount ? <span>แก้ไข {item.revisionCount} ครั้ง</span> : null}
+                        </div>
+                      </div>
+                      <div className="library-created-date">
+                        <small>อัปโหลดเมื่อ</small>
+                        <strong>{formatThaiDateTime(item.createdAt)}</strong>
+                      </div>
+                      <div className="manager-actions library-actions">
                         <button
-                          className="delete-action"
                           type="button"
                           disabled={!status?.connected || source === "demo"}
-                          onClick={() => void deleteItem(item)}
-                          aria-label={`ลบ ${item.title}`}
-                          title="ลบรายการ"
+                          onClick={() => openEditModal(item)}
+                          aria-label={`แก้ไข ${item.title}`}
+                          title="แก้ไขข้อมูลและจัดการรูปภาพ"
                         >
-                          <Trash2 size={15} />
+                          <Pencil size={15} />
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => openMediaPreview(item)}
-                        aria-label={`ดูรายละเอียด ${item.title}`}
-                        title="เปิดดูไฟล์สื่อ"
-                      >
-                        <MoreVertical size={15} />
-                      </button>
-                    </div>
-                  </article>
-                ))}
+                        <button
+                          type="button"
+                          disabled={!status?.connected || source === "demo"}
+                          onClick={() => void openHistory(item)}
+                          aria-label={`ดูประวัติ ${item.title}`}
+                          title="ประวัติการแก้ไข"
+                        >
+                          <BarChart2 size={15} />
+                        </button>
+                        {isManagerRole(currentUser.role) && (
+                          <button
+                            className="delete-action"
+                            type="button"
+                            disabled={!status?.connected || source === "demo"}
+                            onClick={() => void deleteItem(item)}
+                            aria-label={`ลบ ${item.title}`}
+                            title="ลบรายการ"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => openMediaPreview(item)}
+                          aria-label={`ดูรายละเอียด ${item.title}`}
+                          title="เปิดสไลด์ดูรูปภาพในชุดสื่อ"
+                        >
+                          <MoreVertical size={15} />
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
             ) : (
               <div className="library-empty">
@@ -1428,266 +1642,480 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
         </div>
       </footer>
 
-      {showUploadForm && (
-        <div
-          className="admin-modal-backdrop"
-          onMouseDown={() => !uploading && setShowUploadForm(false)}
-        >
-          <section
-            className="admin-upload-modal"
-            id="upload-media-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="upload-media-title"
-            onMouseDown={(event) => event.stopPropagation()}
+      {showUploadForm && (() => {
+        const currentSlideIdx = Math.min(activeUploadSlide, Math.max(0, uploadFiles.length - 1));
+        const currentEntry = uploadFiles[currentSlideIdx] ?? null;
+        return (
+          <div
+            className="admin-modal-backdrop"
+            onMouseDown={() => !uploading && setShowUploadForm(false)}
           >
-            <header className="cinematic-modal-header">
-              <div className="cinematic-modal-title">
-                <span className="cinematic-modal-icon">
-                  <CloudUpload size={22} />
-                </span>
-                <div>
-                  <span className="cinematic-modal-kicker">
-                    <Sparkles size={13} /> AI-ASSISTED RISK MEDIA UPLOAD
+            <section
+              className="admin-upload-modal"
+              id="upload-media-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="upload-media-title"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <header className="cinematic-modal-header">
+                <div className="cinematic-modal-title">
+                  <span className="cinematic-modal-icon">
+                    <CloudUpload size={22} />
                   </span>
-                  <h2 id="upload-media-title">เพิ่มสื่อใหม่</h2>
-                  <p>รองรับ JPG, PNG, WebP และ PDF ไม่เกิน 10 MB • วิเคราะห์ข้อมูลจากภาพด้วย AI อัตโนมัติ</p>
-                </div>
-              </div>
-              <button
-                className="cinematic-modal-close"
-                type="button"
-                onClick={() => setShowUploadForm(false)}
-                disabled={uploading}
-                aria-label="ปิดหน้าต่างเพิ่มสื่อใหม่"
-              >
-                <X size={18} /> ปิดฟอร์ม
-              </button>
-            </header>
-
-            <form onSubmit={handleUpload} className="upload-modal-form">
-              <fieldset disabled={!status?.connected || uploading}>
-                <div
-                  className={file ? "upload-dropzone has-file" : "upload-dropzone"}
-                  onClick={() => fileInput.current?.click()}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    chooseFile(event.dataTransfer.files[0] ?? null);
-                  }}
-                >
-                  <input
-                    ref={fileInput}
-                    type="file"
-                    name="file"
-                    accept=".jpg,.jpeg,.png,.webp,.pdf"
-                    onChange={(event) => chooseFile(event.target.files?.[0] ?? null)}
-                  />
-                  {file ? (
-                    <>
-                      {previewUrl ? (
-                        <img src={previewUrl} alt="ตัวอย่างไฟล์ที่จะอัปโหลด" />
-                      ) : (
-                        <span className="file-type-badge"><FileText size={32} /></span>
-                      )}
-                      <div>
-                        <strong>{file.name}</strong>
-                        <small>{(file.size / 1024 / 1024).toFixed(2)} MB • คลิกเพื่อเปลี่ยนไฟล์</small>
-                      </div>
-                      <div className="dropzone-file-actions">
-                        <button
-                          type="button"
-                          className="ai-reanalyze-btn"
-                          disabled={aiAnalyzing}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void analyzeFileWithAi(file);
-                          }}
-                        >
-                          {aiAnalyzing ? (
-                            <LoaderCircle className="spin" size={15} />
-                          ) : (
-                            <WandSparkles size={15} />
-                          )}
-                          <span>{aiAnalyzing ? "กำลังอ่านภาพ..." : "วิเคราะห์ด้วย AI อีกครั้ง"}</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="remove-file-btn"
-                          aria-label="นำไฟล์ออก"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            resetUploadFormFields();
-                          }}
-                        >
-                          <X size={17} />
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <span><Upload size={27} /></span>
-                      <strong>ลากไฟล์รูปภาพมาวาง หรือคลิกเพื่อเลือกไฟล์</strong>
-                      <small>เมื่อแนบรูปภาพ ระบบ AI จะอ่านข้อมูลในภาพเพื่อเติมชื่อสื่อ ช่วงเหตุการณ์ ประเภท คำอธิบาย และคำบรรยายให้อัตโนมัติ</small>
-                    </>
-                  )}
-                </div>
-
-                {aiStatusMessage && (
-                  <div className={`ai-assist-banner ${aiStatusMessage.type}`} role="status">
-                    {aiAnalyzing ? (
-                      <LoaderCircle className="spin" size={18} />
-                    ) : aiStatusMessage.type === "error" ? (
-                      <AlertTriangle size={18} />
-                    ) : (
-                      <Sparkles size={18} />
-                    )}
-                    <span>{aiStatusMessage.text}</span>
+                  <div>
+                    <span className="cinematic-modal-kicker">
+                      <Sparkles size={13} /> AI-ASSISTED MULTI-IMAGE RISK MEDIA
+                    </span>
+                    <h2 id="upload-media-title">เพิ่มสื่อใหม่ (รองรับอัปโหลดหลายรูปในหัวข้อเดียว)</h2>
+                    <p>เลือกได้หลายรูปภาพพร้อมกันเพื่อให้ผู้ชมสไลด์ดูได้ • วิเคราะห์ข้อมูลจากภาพด้วย AI อัตโนมัติ</p>
                   </div>
-                )}
-
-                <div className="form-grid">
-                  <label className="field-wide">
-                    ชื่อสื่อ <em>*</em>
-                    <input
-                      name="title"
-                      required
-                      value={uploadTitle}
-                      onChange={(event) => setUploadTitle(event.target.value)}
-                      placeholder="เช่น วิธีเตรียมตัวรับมือน้ำท่วมฉับพลัน"
-                    />
-                  </label>
-                  <label>
-                    ช่วงเหตุการณ์ <em>*</em>
-                    <select
-                      name="phase"
-                      value={uploadPhase}
-                      onChange={(event) => setUploadPhase(event.target.value as IncidentPhase)}
-                    >
-                      <option value="before">ก่อนเกิดเหตุ</option>
-                      <option value="during">ระหว่างเกิดเหตุ</option>
-                      <option value="after">หลังเกิดเหตุ</option>
-                    </select>
-                  </label>
-                  <label>
-                    ประเภทเหตุการณ์ <em>*</em>
-                    <select
-                      name="category"
-                      value={uploadCategory}
-                      onChange={(event) => setUploadCategory(event.target.value)}
-                    >
-                      {categories.map((cat) => (
-                        <option key={cat} value={cat}>{cat}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    วันที่เหตุการณ์ <em>*</em>
-                    <input
-                      type="date"
-                      name="eventDate"
-                      required
-                      value={uploadEventDate}
-                      onChange={(event) => setUploadEventDate(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    พื้นที่ <em>*</em>
-                    <input
-                      name="location"
-                      required
-                      value={uploadLocation}
-                      onChange={(event) => setUploadLocation(event.target.value)}
-                    />
-                  </label>
-                  <label className="field-wide">
-                    คำอธิบาย <em>*</em>
-                    <textarea
-                      name="description"
-                      rows={4}
-                      required
-                      value={uploadDescription}
-                      onChange={(event) => setUploadDescription(event.target.value)}
-                      placeholder="สรุปสาระสำคัญและกลุ่มเป้าหมายของสื่อ"
-                    />
-                  </label>
-                  <label className="field-wide">
-                    คำบรรยายภาพเพื่อการเข้าถึง <em>*</em>
-                    <input
-                      name="altText"
-                      required
-                      value={uploadAltText}
-                      onChange={(event) => setUploadAltText(event.target.value)}
-                      placeholder="อธิบายสิ่งที่อยู่ในภาพอย่างกระชับ"
-                    />
-                  </label>
-                  <label className="field-wide">
-                    คำค้นหา <span>(คั่นด้วยเครื่องหมายจุลภาค)</span>
-                    <input
-                      name="keywords"
-                      value={uploadKeywords}
-                      onChange={(event) => setUploadKeywords(event.target.value)}
-                      placeholder="น้ำท่วม, เตรียมพร้อม, ควนโดน"
-                    />
-                  </label>
-                  <label>
-                    สถานะ
-                    <select
-                      name="status"
-                      value={uploadStatus}
-                      onChange={(event) => setUploadStatus(event.target.value as MediaItem["status"])}
-                    >
-                      <option value="published">เผยแพร่ทันที</option>
-                      <option value="draft">บันทึกเป็นฉบับร่าง</option>
-                    </select>
-                  </label>
                 </div>
-              </fieldset>
-
-              {formMessage && (
-                <div className={`form-alert ${formMessage.type}`}>
-                  <span>{formMessage.type === "success" ? <Check size={17} /> : <AlertTriangle size={17} />}</span>
-                  {formMessage.text}
-                </div>
-              )}
-
-              <div className="admin-modal-actions">
                 <button
+                  className="cinematic-modal-close"
                   type="button"
                   onClick={() => setShowUploadForm(false)}
                   disabled={uploading}
+                  aria-label="ปิดหน้าต่างเพิ่มสื่อใหม่"
                 >
-                  ยกเลิก
+                  <X size={18} /> ปิดฟอร์ม
                 </button>
-                <button
-                  className="admin-primary submit-media"
-                  type="submit"
-                  disabled={!status?.connected || !file || uploading}
-                >
-                  {uploading ? <LoaderCircle className="spin" size={18} /> : <CloudUpload size={18} />}
-                  {uploading ? "กำลังบันทึกลง Google..." : "บันทึกและเผยแพร่สื่อ"}
-                </button>
-              </div>
-            </form>
-          </section>
-        </div>
-      )}
+              </header>
+
+              <form onSubmit={handleUpload} className="upload-modal-form">
+                <fieldset disabled={!status?.connected || uploading}>
+                  <input
+                    ref={fileInput}
+                    type="file"
+                    name="files"
+                    multiple
+                    accept=".jpg,.jpeg,.png,.webp,.pdf"
+                    style={{ display: "none" }}
+                    onChange={(event) => addUploadFiles(event.target.files, false)}
+                  />
+
+                  {uploadFiles.length > 0 && currentEntry ? (
+                    <div
+                      className="upload-multi-showcase"
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        addUploadFiles(event.dataTransfer.files, false);
+                      }}
+                    >
+                      <div className="upload-slide-stage">
+                        <div className="upload-slide-badges">
+                          <span className="upload-slide-counter">
+                            <Images size={13} /> รูปที่ {currentSlideIdx + 1} / {uploadFiles.length}
+                          </span>
+                          {currentSlideIdx === 0 ? (
+                            <span className="upload-cover-badge">
+                              <Star size={12} /> ภาพปกหลัก
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="upload-make-cover-btn"
+                              onClick={() => makeCoverUploadFile(currentSlideIdx)}
+                            >
+                              <Star size={12} /> ตั้งเป็นภาพปก
+                            </button>
+                          )}
+                        </div>
+
+                        {uploadFiles.length > 1 && (
+                          <>
+                            <button
+                              type="button"
+                              className="upload-slide-nav prev"
+                              aria-label="ดูรูปก่อนหน้า"
+                              onClick={() =>
+                                setActiveUploadSlide(
+                                  (currentSlideIdx - 1 + uploadFiles.length) % uploadFiles.length,
+                                )
+                              }
+                            >
+                              <ChevronLeft size={18} />
+                            </button>
+                            <button
+                              type="button"
+                              className="upload-slide-nav next"
+                              aria-label="ดูรูปถัดไป"
+                              onClick={() =>
+                                setActiveUploadSlide((currentSlideIdx + 1) % uploadFiles.length)
+                              }
+                            >
+                              <ChevronRight size={18} />
+                            </button>
+                          </>
+                        )}
+
+                        <div className="upload-slide-preview-box">
+                          {currentEntry.previewUrl ? (
+                            <img
+                              src={currentEntry.previewUrl}
+                              alt={`ตัวอย่างรูปที่ ${currentSlideIdx + 1}`}
+                            />
+                          ) : (
+                            <span className="file-type-badge">
+                              <FileText size={36} />
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="upload-slide-bar">
+                          <div className="upload-slide-fileinfo">
+                            <strong>{currentEntry.file.name}</strong>
+                            <small>
+                              {(currentEntry.file.size / 1024 / 1024).toFixed(2)} MB • เลือกแล้วทั้งหมด{" "}
+                              {uploadFiles.length} ไฟล์
+                            </small>
+                          </div>
+                          <div className="dropzone-file-actions">
+                            <button
+                              type="button"
+                              className="ai-reanalyze-btn"
+                              disabled={aiAnalyzing}
+                              onClick={() => void analyzeFileWithAi(currentEntry.file)}
+                            >
+                              {aiAnalyzing ? (
+                                <LoaderCircle className="spin" size={15} />
+                              ) : (
+                                <WandSparkles size={15} />
+                              )}
+                              <span>
+                                {aiAnalyzing ? "กำลังอ่านภาพ..." : "ให้ AI อ่านภาพนี้"}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              className="upload-add-more-btn"
+                              onClick={() => fileInput.current?.click()}
+                            >
+                              <Plus size={15} /> เพิ่มรูปภาพอีก
+                            </button>
+                            <button
+                              type="button"
+                              className="remove-file-btn"
+                              aria-label="นำรูปนี้ออก"
+                              title="นำรูปนี้ออก"
+                              onClick={() => removeUploadFileAt(currentSlideIdx)}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="upload-thumbs-strip" aria-label="รายการรูปภาพในสื่อนี้">
+                        {uploadFiles.map((entry, idx) => (
+                          <div
+                            key={entry.id}
+                            className={
+                              idx === currentSlideIdx
+                                ? "upload-thumb-item is-active"
+                                : "upload-thumb-item"
+                            }
+                            onClick={() => setActiveUploadSlide(idx)}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                setActiveUploadSlide(idx);
+                              }
+                            }}
+                          >
+                            {entry.previewUrl ? (
+                              <img src={entry.previewUrl} alt={`รูปที่ ${idx + 1}`} />
+                            ) : (
+                              <FileText size={18} />
+                            )}
+                            <span className="upload-thumb-index">
+                              {idx === 0 ? "ปก" : idx + 1}
+                            </span>
+                            <button
+                              type="button"
+                              className="upload-thumb-remove"
+                              aria-label={`ลบรูปที่ ${idx + 1}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                removeUploadFileAt(idx);
+                              }}
+                            >
+                              <X size={11} />
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          className="upload-thumb-add"
+                          onClick={() => fileInput.current?.click()}
+                          title="เพิ่มรูปภาพในหัวข้อนี้"
+                        >
+                          <Plus size={18} />
+                          <span>เพิ่มรูป</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      className="upload-dropzone"
+                      onClick={() => fileInput.current?.click()}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        addUploadFiles(event.dataTransfer.files, false);
+                      }}
+                    >
+                      <span><Upload size={27} /></span>
+                      <strong>ลากไฟล์รูปภาพมาวาง (เลือกได้หลายรูปพร้อมกัน) หรือคลิกเพื่อเลือกไฟล์</strong>
+                      <small>รองรับการอัปโหลดหลายรูปในสื่อเดียวเพื่อให้ผู้ชมสไลด์ดูภาพต่อเนื่อง • ระบบ AI จะอ่านภาพแรกเพื่อเติมข้อมูลให้อัตโนมัติ</small>
+                    </div>
+                  )}
+
+                  {aiStatusMessage && (
+                    <div className={`ai-assist-banner ${aiStatusMessage.type}`} role="status">
+                      {aiAnalyzing ? (
+                        <LoaderCircle className="spin" size={18} />
+                      ) : aiStatusMessage.type === "error" ? (
+                        <AlertTriangle size={18} />
+                      ) : (
+                        <Sparkles size={18} />
+                      )}
+                      <span>{aiStatusMessage.text}</span>
+                    </div>
+                  )}
+
+                  <div className="form-grid">
+                    <label className="field-wide">
+                      ชื่อสื่อ <em>*</em>
+                      <input
+                        name="title"
+                        required
+                        value={uploadTitle}
+                        onChange={(event) => setUploadTitle(event.target.value)}
+                        placeholder="เช่น วิธีการป้องกันโรคจากน้ำท่วม"
+                      />
+                    </label>
+                    <label>
+                      ช่วงเหตุการณ์ <em>*</em>
+                      <select
+                        name="phase"
+                        value={uploadPhase}
+                        onChange={(event) => setUploadPhase(event.target.value as IncidentPhase)}
+                      >
+                        <option value="before">ก่อนเกิดเหตุ</option>
+                        <option value="during">ระหว่างเกิดเหตุ</option>
+                        <option value="after">หลังเกิดเหตุ</option>
+                      </select>
+                    </label>
+                    <label>
+                      ประเภทเหตุการณ์ <em>*</em>
+                      <select
+                        name="category"
+                        value={uploadCategory}
+                        onChange={(event) => setUploadCategory(event.target.value)}
+                      >
+                        {categories.map((cat) => (
+                          <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      วันที่เหตุการณ์ <em>*</em>
+                      <input
+                        type="date"
+                        name="eventDate"
+                        required
+                        value={uploadEventDate}
+                        onChange={(event) => setUploadEventDate(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      พื้นที่ <em>*</em>
+                      <input
+                        name="location"
+                        required
+                        value={uploadLocation}
+                        onChange={(event) => setUploadLocation(event.target.value)}
+                      />
+                    </label>
+                    <label className="field-wide">
+                      คำอธิบาย <em>*</em>
+                      <textarea
+                        name="description"
+                        rows={4}
+                        required
+                        value={uploadDescription}
+                        onChange={(event) => setUploadDescription(event.target.value)}
+                        placeholder="สรุปสาระสำคัญและกลุ่มเป้าหมายของสื่อ"
+                      />
+                    </label>
+                    <label className="field-wide">
+                      คำบรรยายภาพเพื่อการเข้าถึง <em>*</em>
+                      <input
+                        name="altText"
+                        required
+                        value={uploadAltText}
+                        onChange={(event) => setUploadAltText(event.target.value)}
+                        placeholder="อธิบายสิ่งที่อยู่ในชุดภาพอย่างกระชับ"
+                      />
+                    </label>
+                    <label className="field-wide">
+                      คำค้นหา <span>(คั่นด้วยเครื่องหมายจุลภาค)</span>
+                      <input
+                        name="keywords"
+                        value={uploadKeywords}
+                        onChange={(event) => setUploadKeywords(event.target.value)}
+                        placeholder="น้ำท่วม, ป้องกันโรค, โรคฉี่หนู"
+                      />
+                    </label>
+                    <label>
+                      สถานะ
+                      <select
+                        name="status"
+                        value={uploadStatus}
+                        onChange={(event) => setUploadStatus(event.target.value as MediaItem["status"])}
+                      >
+                        <option value="published">เผยแพร่ทันที</option>
+                        <option value="draft">บันทึกเป็นฉบับร่าง</option>
+                      </select>
+                    </label>
+                  </div>
+                </fieldset>
+
+                {formMessage && (
+                  <div className={`form-alert ${formMessage.type}`}>
+                    <span>{formMessage.type === "success" ? <Check size={17} /> : <AlertTriangle size={17} />}</span>
+                    {formMessage.text}
+                  </div>
+                )}
+
+                <div className="admin-modal-actions">
+                  <button
+                    type="button"
+                    onClick={() => setShowUploadForm(false)}
+                    disabled={uploading}
+                  >
+                    ยกเลิก
+                  </button>
+                  <button
+                    className="admin-primary submit-media"
+                    type="submit"
+                    disabled={!status?.connected || uploadFiles.length === 0 || uploading}
+                  >
+                    {uploading ? <LoaderCircle className="spin" size={18} /> : <CloudUpload size={18} />}
+                    {uploading
+                      ? uploadProgressText || "กำลังบันทึกลง Google..."
+                      : uploadFiles.length > 1
+                        ? `บันทึกและเผยแพร่ชุดสื่อ (${uploadFiles.length} รูปภาพ)`
+                        : "บันทึกและเผยแพร่สื่อ"}
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
+        );
+      })()}
 
       {editing && (
-        <div className="admin-modal-backdrop" onMouseDown={() => !savingEdit && setEditing(null)}>
+        <div className="admin-modal-backdrop" onMouseDown={() => !savingEdit && closeEditModal()}>
           <section className="admin-edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-media-title" onMouseDown={(event) => event.stopPropagation()}>
             <header className="cinematic-modal-header">
               <div className="cinematic-modal-title">
                 <span className="cinematic-modal-icon"><Pencil size={19} /></span>
                 <div>
-                  <span className="cinematic-modal-kicker"><Sparkles size={13} /> EDIT MEDIA METADATA</span>
-                  <h2 id="edit-media-title">แก้ไขข้อมูลสื่อ</h2>
-                  <p>ระบบจะเก็บผู้แก้ไข เวลา และรายการข้อมูลที่เปลี่ยน</p>
+                  <span className="cinematic-modal-kicker"><Sparkles size={13} /> EDIT MEDIA & SLIDES</span>
+                  <h2 id="edit-media-title">แก้ไขข้อมูลสื่อและรูปภาพในชุดสื่อ</h2>
+                  <p>สามารถแก้ไขรายละเอียด หรือเพิ่ม/ลบรูปภาพประกอบในหัวข้อนี้ได้</p>
                 </div>
               </div>
-              <button className="cinematic-modal-close" type="button" onClick={() => setEditing(null)} disabled={savingEdit} aria-label="ปิดหน้าต่างแก้ไข"><X size={18} /> ปิด</button>
+              <button className="cinematic-modal-close" type="button" onClick={closeEditModal} disabled={savingEdit} aria-label="ปิดหน้าต่างแก้ไข"><X size={18} /> ปิด</button>
             </header>
             <form onSubmit={handleEdit}>
+              <input
+                ref={editFileInput}
+                type="file"
+                multiple
+                accept=".jpg,.jpeg,.png,.webp,.pdf"
+                style={{ display: "none" }}
+                onChange={(event) => addEditFiles(event.target.files)}
+              />
+
+              <div className="edit-slides-manager">
+                <div className="edit-slides-header">
+                  <strong>
+                    <Images size={15} /> รูปภาพในหัวข้อนี้ ({1 + editExtraSlides.length + editNewFiles.length} ภาพ)
+                  </strong>
+                  <button
+                    type="button"
+                    className="upload-add-more-btn"
+                    disabled={savingEdit}
+                    onClick={() => editFileInput.current?.click()}
+                  >
+                    <Plus size={14} /> เพิ่มรูปภาพในชุดสื่อนี้
+                  </button>
+                </div>
+                <div className="upload-thumbs-strip">
+                  <div className="upload-thumb-item is-active" title="ภาพปกหลัก">
+                    {editing.thumbnailUrl ? (
+                      <img src={editing.thumbnailUrl} alt={editing.title} />
+                    ) : (
+                      <FileImage size={18} />
+                    )}
+                    <span className="upload-thumb-index">ปก</span>
+                  </div>
+                  {editExtraSlides.map((slide, idx) => (
+                    <div key={`${slide.id}-${idx}`} className="upload-thumb-item" title={slide.fileName}>
+                      {slide.thumbnailUrl ? (
+                        <img src={slide.thumbnailUrl} alt={slide.fileName} />
+                      ) : (
+                        <FileImage size={18} />
+                      )}
+                      <span className="upload-thumb-index">{idx + 2}</span>
+                      <button
+                        type="button"
+                        className="upload-thumb-remove"
+                        aria-label={`ลบรูปที่ ${idx + 2}`}
+                        onClick={() =>
+                          setEditExtraSlides((current) => current.filter((_, i) => i !== idx))
+                        }
+                      >
+                        <X size={11} />
+                      </button>
+                    </div>
+                  ))}
+                  {editNewFiles.map((entry, idx) => (
+                    <div key={entry.id} className="upload-thumb-item is-new" title={`ใหม่: ${entry.file.name}`}>
+                      {entry.previewUrl ? (
+                        <img src={entry.previewUrl} alt={entry.file.name} />
+                      ) : (
+                        <FileText size={18} />
+                      )}
+                      <span className="upload-thumb-index">ใหม่</span>
+                      <button
+                        type="button"
+                        className="upload-thumb-remove"
+                        aria-label="นำรูปใหม่ออก"
+                        onClick={() => removeEditNewFileAt(idx)}
+                      >
+                        <X size={11} />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    className="upload-thumb-add"
+                    onClick={() => editFileInput.current?.click()}
+                    title="เพิ่มรูปภาพประกอบ"
+                  >
+                    <Plus size={18} />
+                    <span>เพิ่มรูป</span>
+                  </button>
+                </div>
+              </div>
+
               <div className="form-grid">
                 <label className="field-wide">ชื่อสื่อ <em>*</em><input name="title" required defaultValue={editing.title} /></label>
                 <label>ช่วงเหตุการณ์ <em>*</em>
@@ -1717,7 +2145,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                 </label>
               </div>
               <div className="admin-modal-actions">
-                <button type="button" onClick={() => setEditing(null)} disabled={savingEdit}>ยกเลิก</button>
+                <button type="button" onClick={closeEditModal} disabled={savingEdit}>ยกเลิก</button>
                 <button className="admin-primary" type="submit" disabled={savingEdit}>
                   {savingEdit ? <LoaderCircle className="spin" size={17} /> : <Save size={17} />}
                   {savingEdit ? "กำลังบันทึก..." : "บันทึกการแก้ไข"}
@@ -1727,6 +2155,137 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
           </section>
         </div>
       )}
+
+      {previewItem && (() => {
+        const slides = getMediaSlides(previewItem);
+        const safeIdx = Math.min(previewSlideIndex, Math.max(0, slides.length - 1));
+        const activeSlide = slides[safeIdx] ?? slides[0];
+        return (
+          <div className="admin-modal-backdrop" onMouseDown={() => setPreviewItem(null)}>
+            <section
+              className="admin-upload-modal admin-preview-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="admin-preview-title"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <header className="cinematic-modal-header">
+                <div className="cinematic-modal-title">
+                  <span className="cinematic-modal-icon"><Images size={20} /></span>
+                  <div>
+                    <span className="cinematic-modal-kicker">
+                      <Sparkles size={13} /> MEDIA SLIDE PREVIEW ({safeIdx + 1} / {slides.length})
+                    </span>
+                    <h2 id="admin-preview-title">{previewItem.title}</h2>
+                    <p>{previewItem.category} • {phaseLabels[previewItem.phase]} • {previewItem.location}</p>
+                  </div>
+                </div>
+                <button
+                  className="cinematic-modal-close"
+                  type="button"
+                  onClick={() => setPreviewItem(null)}
+                  aria-label="ปิดหน้าต่างดูภาพ"
+                >
+                  <X size={18} /> ปิด
+                </button>
+              </header>
+
+              <div className="upload-modal-form">
+                <div className="upload-multi-showcase">
+                  <div className="upload-slide-stage">
+                    <div className="upload-slide-badges">
+                      <span className="upload-slide-counter">
+                        <Images size={13} /> ภาพที่ {safeIdx + 1} จาก {slides.length}
+                      </span>
+                    </div>
+
+                    {slides.length > 1 && (
+                      <>
+                        <button
+                          type="button"
+                          className="upload-slide-nav prev"
+                          aria-label="ภาพก่อนหน้า"
+                          onClick={() =>
+                            setPreviewSlideIndex((safeIdx - 1 + slides.length) % slides.length)
+                          }
+                        >
+                          <ChevronLeft size={20} />
+                        </button>
+                        <button
+                          type="button"
+                          className="upload-slide-nav next"
+                          aria-label="ภาพถัดไป"
+                          onClick={() =>
+                            setPreviewSlideIndex((safeIdx + 1) % slides.length)
+                          }
+                        >
+                          <ChevronRight size={20} />
+                        </button>
+                      </>
+                    )}
+
+                    <div className="upload-slide-preview-box preview-large">
+                      {activeSlide?.thumbnailUrl ? (
+                        <img src={activeSlide.thumbnailUrl} alt={previewItem.altText || previewItem.title} />
+                      ) : (
+                        <span className="file-type-badge"><FileImage size={42} /></span>
+                      )}
+                    </div>
+
+                    <div className="upload-slide-bar">
+                      <div className="upload-slide-fileinfo">
+                        <strong>{activeSlide?.fileName || previewItem.fileName}</strong>
+                        <small>{previewItem.description}</small>
+                      </div>
+                      <div className="dropzone-file-actions">
+                        {(activeSlide?.downloadUrl || activeSlide?.thumbnailUrl) && (
+                          <a
+                            className="ai-reanalyze-btn"
+                            href={activeSlide.downloadUrl || activeSlide.thumbnailUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <Maximize2 size={14} /> เปิดไฟล์เต็ม / ดาวน์โหลด
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {slides.length > 1 && (
+                    <div className="upload-thumbs-strip">
+                      {slides.map((slide, idx) => (
+                        <div
+                          key={`${slide.id}-${idx}`}
+                          className={
+                            idx === safeIdx ? "upload-thumb-item is-active" : "upload-thumb-item"
+                          }
+                          onClick={() => setPreviewSlideIndex(idx)}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              setPreviewSlideIndex(idx);
+                            }
+                          }}
+                        >
+                          {slide.thumbnailUrl ? (
+                            <img src={slide.thumbnailUrl} alt={`ภาพที่ ${idx + 1}`} />
+                          ) : (
+                            <FileImage size={18} />
+                          )}
+                          <span className="upload-thumb-index">{idx + 1}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </section>
+          </div>
+        );
+      })()}
 
       {historyItem && (
         <div className="admin-modal-backdrop" onMouseDown={() => setHistoryItem(null)}>

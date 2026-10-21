@@ -1,3 +1,4 @@
+import { normalizeMediaItems } from "@/app/lib/media-gallery-utils";
 import { getGoogleScriptUrl, json } from "@/app/lib/server";
 import { sampleMedia } from "@/app/sample-data";
 import type { MediaItem } from "@/app/types";
@@ -30,12 +31,7 @@ export async function GET() {
       throw new Error(result.error || "ไม่พบรายการสื่อ");
     }
 
-    const activeItems = result.items.filter(
-      (item) =>
-        Boolean(item && item.id) &&
-        String((item as { status?: string }).status || "").toLowerCase() !== "deleted" &&
-        item.status === "published",
-    );
+    const activeItems = normalizeMediaItems(result.items, ["published"]);
 
     return json({ items: activeItems, source: "google" });
   } catch {

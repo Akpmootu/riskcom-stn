@@ -37,6 +37,7 @@ export async function postToGoogle(payload: JsonRecord) {
       secret: process.env.GOOGLE_APPS_SCRIPT_SECRET ?? "",
     }),
     redirect: "follow",
+    cache: "no-store",
   });
 
   const text = await response.text();

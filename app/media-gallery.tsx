@@ -17,6 +17,7 @@ import {
   HeartPulse,
   Home,
   Image as ImageIcon,
+  Images,
   Info,
   MapPin,
   Maximize2,
@@ -29,7 +30,11 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  getMediaSlides,
+  normalizeMediaItems,
+} from "./lib/media-gallery-utils";
 import {
   readMediaCache,
   writeMediaCache,
@@ -120,19 +125,30 @@ function getVisualClass(category: string) {
 }
 
 function getMediaTypeLabel(item: MediaItem) {
+  const slides = getMediaSlides(item);
+  if (slides.length > 1) return `ชุดสื่อ ${slides.length} ภาพ`;
   if (item.fileType.includes("pdf")) return "คู่มือ / PDF";
   if (item.fileType.includes("video")) return "วิดีโอ";
   if (item.category.includes("โรค") || item.category.includes("หมอก")) return "อินโฟกราฟิก";
   return "โปสเตอร์";
 }
 
-function MediaArtwork({ item, large = false }: { item: MediaItem; large?: boolean }) {
+function MediaArtwork({
+  item,
+  large = false,
+  slideUrl,
+}: {
+  item: MediaItem;
+  large?: boolean;
+  slideUrl?: string;
+}) {
   const visual = getVisualClass(item.category);
-  if (item.thumbnailUrl) {
+  const effectiveUrl = slideUrl ?? item.thumbnailUrl;
+  if (effectiveUrl) {
     return (
       <img
         className={large ? "detail-image" : "media-image"}
-        src={item.thumbnailUrl}
+        src={effectiveUrl}
         alt={item.altText}
       />
     );
@@ -340,6 +356,8 @@ export function MediaGallery() {
   const [phase, setPhase] = useState<IncidentPhase | "all">("all");
   const [category, setCategory] = useState("ทั้งหมด");
   const [selected, setSelected] = useState<MediaItem | null>(null);
+  const [selectedSlideIndex, setSelectedSlideIndex] = useState(0);
+  const [cardSlideIndices, setCardSlideIndices] = useState<Record<string, number>>({});
   const [toast, setToast] = useState("");
   const [loading, setLoading] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -349,10 +367,13 @@ export function MediaGallery() {
   const [cacheSavedAt, setCacheSavedAt] = useState<number | null>(null);
   const [showingCachedData, setShowingCachedData] = useState(false);
   const [featuredIndex, setFeaturedIndex] = useState(0);
+  const touchStartX = useRef<number | null>(null);
 
   const applyMediaResponse = useCallback(
     (result: MediaResponse, cachedAt: number, fromCache: boolean) => {
-      setItems(result.items);
+      const normalized = normalizeMediaItems(result.items || [], ["published"]);
+      const effectiveItems = normalized.length > 0 ? normalized : result.items;
+      setItems(effectiveItems);
       setSource(result.source);
       setSourceMessage(result.message ?? "");
       setCacheSavedAt(cachedAt);
@@ -360,10 +381,13 @@ export function MediaGallery() {
       const requestedId = new URLSearchParams(window.location.search).get(
         "media",
       );
-      const requestedItem = result.items.find(
+      const requestedItem = effectiveItems.find(
         (item) => item.id === requestedId,
       );
-      if (requestedItem) setSelected(requestedItem);
+      if (requestedItem) {
+        setSelected(requestedItem);
+        setSelectedSlideIndex(0);
+      }
     },
     [],
   );
@@ -480,13 +504,23 @@ export function MediaGallery() {
 
   useEffect(() => {
     if (!selected) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (fullscreen) setFullscreen(false);
-      else setSelected(null);
+    const slides = getMediaSlides(selected);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (fullscreen) setFullscreen(false);
+        else setSelected(null);
+        return;
+      }
+      if (slides.length > 1) {
+        if (event.key === "ArrowLeft") {
+          setSelectedSlideIndex((idx) => (idx - 1 + slides.length) % slides.length);
+        } else if (event.key === "ArrowRight") {
+          setSelectedSlideIndex((idx) => (idx + 1) % slides.length);
+        }
+      }
     };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [fullscreen, selected]);
 
   useEffect(() => {
@@ -926,60 +960,142 @@ export function MediaGallery() {
 
           {filteredItems.length ? (
             <div className="gallery-grid">
-              {filteredItems.map((item) => (
-                <article className="media-card" key={item.id}>
-                  <button className="media-preview" type="button" onClick={() => setSelected(item)}>
-                    <MediaArtwork item={item} />
-                    <span className="preview-overlay"><Eye size={18} /> ดูสื่อขยาย</span>
-                    <span className="media-type-pill">
-                      {item.fileType.includes("pdf") ? <FileText size={13} /> : <ImageIcon size={13} />}
-                      {getMediaTypeLabel(item)}
-                    </span>
-                    <span className={`phase-badge badge-${item.phase}`}>{phaseLabels[item.phase]}</span>
-                  </button>
-                  <div className="media-body">
-                    <h3 onClick={() => setSelected(item)}>{item.title}</h3>
-                    <p>{item.description}</p>
-                    <div className="media-meta-row">
-                      <time dateTime={item.eventDate}>
-                        <CalendarDays size={14} /> {formatThaiDate(item.eventDate)}
-                      </time>
-                      <span className="media-location">
-                        <MapPin size={14} /> {item.location}
+              {filteredItems.map((item) => {
+                const slides = getMediaSlides(item);
+                const cardSlideIdx = Math.min(
+                  cardSlideIndices[item.id] ?? 0,
+                  Math.max(0, slides.length - 1),
+                );
+                const activeCardSlide = slides[cardSlideIdx] ?? slides[0];
+                return (
+                  <article className="media-card" key={item.id}>
+                    <div
+                      className="media-preview"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        setSelected(item);
+                        setSelectedSlideIndex(cardSlideIdx);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setSelected(item);
+                          setSelectedSlideIndex(cardSlideIdx);
+                        }
+                      }}
+                    >
+                      <MediaArtwork item={item} slideUrl={activeCardSlide?.thumbnailUrl} />
+                      <span className="preview-overlay">
+                        <Eye size={18} />{" "}
+                        {slides.length > 1
+                          ? `สไลด์ดูทั้งชุด (${slides.length} ภาพ)`
+                          : "ดูสื่อขยาย"}
                       </span>
-                    </div>
-                    <div className="media-footer">
-                      {item.downloadUrl ? (
-                        <a
-                          className="card-download-btn"
-                          href={item.downloadUrl}
-                          download
-                          aria-label={`ดาวน์โหลด ${item.title}`}
-                        >
-                          <ArrowDownToLine size={16} /> ดาวน์โหลด
-                        </a>
-                      ) : (
-                        <button
-                          className="card-download-btn"
-                          type="button"
-                          onClick={downloadFallback}
-                          aria-label={`ดาวน์โหลด ${item.title}`}
-                        >
-                          <ArrowDownToLine size={16} /> ดาวน์โหลด
-                        </button>
+                      <span className="media-type-pill">
+                        {slides.length > 1 ? (
+                          <Images size={13} />
+                        ) : item.fileType.includes("pdf") ? (
+                          <FileText size={13} />
+                        ) : (
+                          <ImageIcon size={13} />
+                        )}
+                        {getMediaTypeLabel(item)}
+                      </span>
+                      <span className={`phase-badge badge-${item.phase}`}>{phaseLabels[item.phase]}</span>
+
+                      {slides.length > 1 && (
+                        <>
+                          <button
+                            type="button"
+                            className="card-slide-arrow prev"
+                            aria-label="ภาพก่อนหน้า"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setCardSlideIndices((current) => ({
+                                ...current,
+                                [item.id]: (cardSlideIdx - 1 + slides.length) % slides.length,
+                              }));
+                            }}
+                          >
+                            <ChevronLeft size={16} />
+                          </button>
+                          <button
+                            type="button"
+                            className="card-slide-arrow next"
+                            aria-label="ภาพถัดไป"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setCardSlideIndices((current) => ({
+                                ...current,
+                                [item.id]: (cardSlideIdx + 1) % slides.length,
+                              }));
+                            }}
+                          >
+                            <ChevronRight size={16} />
+                          </button>
+                          <div className="card-slide-dots" aria-hidden="true">
+                            {slides.map((slide, idx) => (
+                              <span
+                                key={`${slide.id}-${idx}`}
+                                className={idx === cardSlideIdx ? "card-slide-dot is-active" : "card-slide-dot"}
+                              />
+                            ))}
+                          </div>
+                        </>
                       )}
-                      <button
-                        className="card-share-btn"
-                        type="button"
-                        onClick={() => shareItem(item)}
-                        aria-label={`แชร์ ${item.title}`}
-                      >
-                        <Share2 size={16} />
-                      </button>
                     </div>
-                  </div>
-                </article>
-              ))}
+                    <div className="media-body">
+                      <h3
+                        onClick={() => {
+                          setSelected(item);
+                          setSelectedSlideIndex(cardSlideIdx);
+                        }}
+                      >
+                        {item.title}
+                      </h3>
+                      <p>{item.description}</p>
+                      <div className="media-meta-row">
+                        <time dateTime={item.eventDate}>
+                          <CalendarDays size={14} /> {formatThaiDate(item.eventDate)}
+                        </time>
+                        <span className="media-location">
+                          <MapPin size={14} /> {item.location}
+                        </span>
+                      </div>
+                      <div className="media-footer">
+                        {(activeCardSlide?.downloadUrl || item.downloadUrl) ? (
+                          <a
+                            className="card-download-btn"
+                            href={activeCardSlide?.downloadUrl || item.downloadUrl}
+                            download
+                            aria-label={`ดาวน์โหลด ${item.title}`}
+                          >
+                            <ArrowDownToLine size={16} /> ดาวน์โหลด
+                          </a>
+                        ) : (
+                          <button
+                            className="card-download-btn"
+                            type="button"
+                            onClick={downloadFallback}
+                            aria-label={`ดาวน์โหลด ${item.title}`}
+                          >
+                            <ArrowDownToLine size={16} /> ดาวน์โหลด
+                          </button>
+                        )}
+                        <button
+                          className="card-share-btn"
+                          type="button"
+                          onClick={() => shareItem(item)}
+                          aria-label={`แชร์ ${item.title}`}
+                        >
+                          <Share2 size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           ) : (
             <div className="empty-state">
@@ -1072,87 +1188,226 @@ export function MediaGallery() {
         <a href="/admin"><UserRound size={20} /><span>ผู้ดูแล</span></a>
       </nav>
 
-      {selected && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setSelected(null)}>
-          <div
-            className="detail-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="detail-title"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <button className="modal-close" type="button" aria-label="ปิด" onClick={() => setSelected(null)}>
-              <X size={20} />
-            </button>
-            <button
-              className="detail-visual"
-              type="button"
-              onClick={() => setFullscreen(true)}
-              aria-label={`ดูภาพ ${selected.title} แบบเต็มหน้าจอ`}
+      {selected && (() => {
+        const slides = getMediaSlides(selected);
+        const safeSlideIdx = Math.min(selectedSlideIndex, Math.max(0, slides.length - 1));
+        const activeSlide = slides[safeSlideIdx] ?? slides[0];
+        const activeDownloadUrl = activeSlide?.downloadUrl || selected.downloadUrl;
+        return (
+          <div className="modal-backdrop" role="presentation" onMouseDown={() => setSelected(null)}>
+            <div
+              className="detail-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="detail-title"
+              onMouseDown={(event) => event.stopPropagation()}
             >
-              <MediaArtwork item={selected} large />
-              <span className="fullscreen-hint">
-                <Maximize2 size={17} /> ดูเต็มหน้าจอ
-              </span>
-            </button>
-            <div className="detail-copy">
-              <div className="detail-badges">
-                <span className={`phase-badge badge-${selected.phase}`}>{phaseLabels[selected.phase]}</span>
-                <span>{selected.category}</span>
-              </div>
-              <h2 id="detail-title">{selected.title}</h2>
-              <p>{selected.description}</p>
-              <dl>
-                <div><dt><MapPin size={16} /> พื้นที่</dt><dd>{selected.location}</dd></div>
-                <div><dt><CalendarDays size={16} /> วันที่</dt><dd>{formatThaiDate(selected.eventDate)}</dd></div>
-              </dl>
-              <div className="keyword-list">
-                {selected.keywords.map((keyword) => <span key={keyword}>#{keyword}</span>)}
-              </div>
-              <div className="detail-actions">
-                {selected.downloadUrl ? (
-                  <a className="primary-action" href={selected.downloadUrl} download>
-                    <ArrowDownToLine size={18} /> ดาวน์โหลดสื่อ
-                  </a>
-                ) : (
-                  <button className="primary-action" type="button" onClick={downloadFallback}>
-                    <ArrowDownToLine size={18} /> ดาวน์โหลดสื่อ
+              <button className="modal-close" type="button" aria-label="ปิด" onClick={() => setSelected(null)}>
+                <X size={20} />
+              </button>
+              <div
+                className="detail-visual-column"
+                onTouchStart={(event) => {
+                  touchStartX.current = event.touches[0]?.clientX ?? null;
+                }}
+                onTouchEnd={(event) => {
+                  if (touchStartX.current === null || slides.length <= 1) return;
+                  const deltaX = (event.changedTouches[0]?.clientX ?? 0) - touchStartX.current;
+                  touchStartX.current = null;
+                  if (Math.abs(deltaX) > 42) {
+                    if (deltaX < 0) {
+                      setSelectedSlideIndex((safeSlideIdx + 1) % slides.length);
+                    } else {
+                      setSelectedSlideIndex((safeSlideIdx - 1 + slides.length) % slides.length);
+                    }
+                  }
+                }}
+              >
+                <div className="detail-visual-stage">
+                  {slides.length > 1 && (
+                    <span className="detail-slide-counter">
+                      <Images size={14} /> ภาพที่ {safeSlideIdx + 1} / {slides.length}
+                    </span>
+                  )}
+
+                  {slides.length > 1 && (
+                    <>
+                      <button
+                        type="button"
+                        className="detail-slide-arrow prev"
+                        aria-label="ดูภาพก่อนหน้า"
+                        onClick={() =>
+                          setSelectedSlideIndex((safeSlideIdx - 1 + slides.length) % slides.length)
+                        }
+                      >
+                        <ChevronLeft size={20} />
+                      </button>
+                      <button
+                        type="button"
+                        className="detail-slide-arrow next"
+                        aria-label="ดูภาพถัดไป"
+                        onClick={() =>
+                          setSelectedSlideIndex((safeSlideIdx + 1) % slides.length)
+                        }
+                      >
+                        <ChevronRight size={20} />
+                      </button>
+                    </>
+                  )}
+
+                  <button
+                    className="detail-visual"
+                    type="button"
+                    onClick={() => setFullscreen(true)}
+                    aria-label={`ดูภาพ ${selected.title} แบบเต็มหน้าจอ`}
+                  >
+                    <MediaArtwork item={selected} large slideUrl={activeSlide?.thumbnailUrl} />
+                    <span className="fullscreen-hint">
+                      <Maximize2 size={17} /> ดูเต็มหน้าจอ
+                    </span>
                   </button>
+                </div>
+
+                {slides.length > 1 && (
+                  <div className="detail-slide-thumbs" aria-label="เลือกรูปภาพในหัวข้อนี้">
+                    {slides.map((slide, idx) => (
+                      <button
+                        key={`${slide.id}-${idx}`}
+                        type="button"
+                        className={
+                          idx === safeSlideIdx ? "detail-thumb-btn is-active" : "detail-thumb-btn"
+                        }
+                        onClick={() => setSelectedSlideIndex(idx)}
+                        aria-label={`ดูภาพที่ ${idx + 1}`}
+                      >
+                        {slide.thumbnailUrl ? (
+                          <img src={slide.thumbnailUrl} alt={`ภาพที่ ${idx + 1}`} />
+                        ) : (
+                          <ImageIcon size={16} />
+                        )}
+                        <span>{idx + 1}</span>
+                      </button>
+                    ))}
+                  </div>
                 )}
-                <button className="secondary-action" type="button" onClick={() => shareItem(selected)}>
-                  <Share2 size={18} /> แชร์ต่อ
-                </button>
+              </div>
+
+              <div className="detail-copy">
+                <div className="detail-badges">
+                  <span className={`phase-badge badge-${selected.phase}`}>{phaseLabels[selected.phase]}</span>
+                  <span>{selected.category}</span>
+                  {slides.length > 1 && (
+                    <span className="detail-multi-badge">
+                      <Images size={13} /> ชุดสื่อ {slides.length} ภาพ
+                    </span>
+                  )}
+                </div>
+                <h2 id="detail-title">{selected.title}</h2>
+                <p>{selected.description}</p>
+                <dl>
+                  <div><dt><MapPin size={16} /> พื้นที่</dt><dd>{selected.location}</dd></div>
+                  <div><dt><CalendarDays size={16} /> วันที่</dt><dd>{formatThaiDate(selected.eventDate)}</dd></div>
+                </dl>
+                <div className="keyword-list">
+                  {selected.keywords.map((keyword) => <span key={keyword}>#{keyword}</span>)}
+                </div>
+                <div className="detail-actions">
+                  {activeDownloadUrl ? (
+                    <a className="primary-action" href={activeDownloadUrl} download>
+                      <ArrowDownToLine size={18} />{" "}
+                      {slides.length > 1
+                        ? `ดาวน์โหลดภาพนี้ (${safeSlideIdx + 1}/${slides.length})`
+                        : "ดาวน์โหลดสื่อ"}
+                    </a>
+                  ) : (
+                    <button className="primary-action" type="button" onClick={downloadFallback}>
+                      <ArrowDownToLine size={18} /> ดาวน์โหลดสื่อ
+                    </button>
+                  )}
+                  <button className="secondary-action" type="button" onClick={() => shareItem(selected)}>
+                    <Share2 size={18} /> แชร์ต่อ
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
-      {selected && fullscreen && (
-        <div
-          className="fullscreen-viewer"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`ภาพเต็มหน้าจอ ${selected.title}`}
-          onMouseDown={() => setFullscreen(false)}
-        >
-          <button
-            className="fullscreen-close"
-            type="button"
-            aria-label="ปิดภาพเต็มหน้าจอ"
-            onClick={() => setFullscreen(false)}
-          >
-            <X size={23} />
-          </button>
+      {selected && fullscreen && (() => {
+        const slides = getMediaSlides(selected);
+        const safeSlideIdx = Math.min(selectedSlideIndex, Math.max(0, slides.length - 1));
+        const activeSlide = slides[safeSlideIdx] ?? slides[0];
+        return (
           <div
-            className="fullscreen-stage"
-            onMouseDown={(event) => event.stopPropagation()}
+            className="fullscreen-viewer"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`ภาพเต็มหน้าจอ ${selected.title}`}
+            onMouseDown={() => setFullscreen(false)}
+            onTouchStart={(event) => {
+              touchStartX.current = event.touches[0]?.clientX ?? null;
+            }}
+            onTouchEnd={(event) => {
+              if (touchStartX.current === null || slides.length <= 1) return;
+              const deltaX = (event.changedTouches[0]?.clientX ?? 0) - touchStartX.current;
+              touchStartX.current = null;
+              if (Math.abs(deltaX) > 42) {
+                if (deltaX < 0) {
+                  setSelectedSlideIndex((safeSlideIdx + 1) % slides.length);
+                } else {
+                  setSelectedSlideIndex((safeSlideIdx - 1 + slides.length) % slides.length);
+                }
+              }
+            }}
           >
-            <MediaArtwork item={selected} large />
+            <button
+              className="fullscreen-close"
+              type="button"
+              aria-label="ปิดภาพเต็มหน้าจอ"
+              onClick={() => setFullscreen(false)}
+            >
+              <X size={23} />
+            </button>
+            {slides.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  className="fullscreen-slide-arrow prev"
+                  aria-label="ภาพก่อนหน้า"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setSelectedSlideIndex((safeSlideIdx - 1 + slides.length) % slides.length);
+                  }}
+                >
+                  <ChevronLeft size={26} />
+                </button>
+                <button
+                  type="button"
+                  className="fullscreen-slide-arrow next"
+                  aria-label="ภาพถัดไป"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setSelectedSlideIndex((safeSlideIdx + 1) % slides.length);
+                  }}
+                >
+                  <ChevronRight size={26} />
+                </button>
+              </>
+            )}
+            <div
+              className="fullscreen-stage"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <MediaArtwork item={selected} large slideUrl={activeSlide?.thumbnailUrl} />
+            </div>
+            <div className="fullscreen-caption">
+              {selected.title}
+              {slides.length > 1 ? ` • ภาพที่ ${safeSlideIdx + 1} จาก ${slides.length}` : ""}
+            </div>
           </div>
-          <div className="fullscreen-caption">{selected.title}</div>
-        </div>
-      )}
+        );
+      })()}
 
       {toast && <div className="toast" role="status"><Check size={17} /> {toast}</div>}
     </main>
