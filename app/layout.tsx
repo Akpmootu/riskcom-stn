@@ -6,6 +6,10 @@ import "@fontsource/kanit/500.css";
 import "@fontsource/kanit/600.css";
 import "@fontsource/kanit/700.css";
 import "@fontsource/kanit/800.css";
+import "@fontsource/sarabun/400.css";
+import "@fontsource/sarabun/500.css";
+import "@fontsource/sarabun/600.css";
+import "@fontsource/sarabun/700.css";
 import "./globals.css";
 
 export async function generateMetadata(): Promise<Metadata> {
