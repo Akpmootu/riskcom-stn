@@ -2,6 +2,9 @@
 
 import {
   AlertTriangle,
+  ArrowRight,
+  BarChart2,
+  Braces,
   CalendarDays,
   Check,
   ChevronLeft,
@@ -12,19 +15,25 @@ import {
   FileImage,
   FileText,
   FolderCheck,
+  Globe,
+  HeartPulse,
   History,
   Link2,
   LoaderCircle,
   LogOut,
+  MapPin,
+  MoreVertical,
   Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
   Save,
   Search,
+  Share2,
   ShieldCheck,
   Trash2,
   Upload,
+  UserRound,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -32,7 +41,7 @@ import { signOut } from "next-auth/react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { isManagerRole, type PortalUser } from "../auth-types";
 import { clearMediaCache } from "../media-cache";
-import type { MediaItem, MediaResponse, MediaRevision } from "../types";
+import type { MediaItem, MediaResponse, MediaRevision, SiteStatsResponse } from "../types";
 import { AdminDashboardSkeleton } from "./admin-skeleton";
 
 type ConnectionStatus = {
@@ -117,6 +126,22 @@ function formatMonthLabel(value: string) {
   }).format(date);
 }
 
+function buildPaginationPages(current: number, total: number): Array<number | "ellipsis"> {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, index) => index + 1);
+  }
+  const pages: Array<number | "ellipsis"> = [1];
+  const start = Math.max(2, current - 1);
+  const end = Math.min(total - 1, Math.max(current + 1, 5));
+  if (start > 2) pages.push("ellipsis");
+  for (let page = start; page <= end; page += 1) {
+    pages.push(page);
+  }
+  if (end < total - 1) pages.push("ellipsis");
+  pages.push(total);
+  return pages;
+}
+
 const DEFAULT_CATEGORIES = [
   "น้ำท่วม",
   "โรคติดต่อ",
@@ -153,6 +178,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [historyItem, setHistoryItem] = useState<MediaItem | null>(null);
   const [historyEntries, setHistoryEntries] = useState<MediaRevision[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [visitorStats, setVisitorStats] = useState<SiteStatsResponse | null>(null);
 
   // System Categories state for Basic Settings management
   const [systemCategories, setSystemCategories] = useState<string[]>(DEFAULT_CATEGORIES);
@@ -163,7 +189,12 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    void Promise.allSettled([checkConnection(), loadItems(), loadCategories()]).finally(() => {
+    void Promise.allSettled([
+      checkConnection(),
+      loadItems(),
+      loadCategories(),
+      loadVisitorStats(),
+    ]).finally(() => {
       setHydrating(false);
     });
     // Initial portal data is intentionally loaded once for the authenticated user.
@@ -174,6 +205,20 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       if (previewUrl) URL.revokeObjectURL(previewUrl);
     };
   }, [previewUrl]);
+
+  async function loadVisitorStats() {
+    try {
+      const response = await fetch("/api/analytics/stats", { cache: "no-store" });
+      if (response.ok) {
+        const result = (await response.json()) as SiteStatsResponse;
+        if (typeof result.totalViews === "number") {
+          setVisitorStats(result);
+        }
+      }
+    } catch {
+      // Optional footer stat
+    }
+  }
 
   async function loadCategories() {
     try {
@@ -309,9 +354,15 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
 
   const mediaPageCount = Math.max(1, Math.ceil(filteredItems.length / MEDIA_PAGE_SIZE));
   const activeMediaPage = Math.min(mediaPage, mediaPageCount);
+  const startItemIndex = filteredItems.length ? (activeMediaPage - 1) * MEDIA_PAGE_SIZE + 1 : 0;
+  const endItemIndex = Math.min(activeMediaPage * MEDIA_PAGE_SIZE, filteredItems.length);
   const visibleMediaItems = filteredItems.slice(
     (activeMediaPage - 1) * MEDIA_PAGE_SIZE,
     activeMediaPage * MEDIA_PAGE_SIZE,
+  );
+  const paginationPages = useMemo(
+    () => buildPaginationPages(activeMediaPage, mediaPageCount),
+    [activeMediaPage, mediaPageCount],
   );
   const hasActiveMediaFilters =
     Boolean(mediaQuery) ||
@@ -544,73 +595,106 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     });
   }
 
+  function openMediaPreview(item: MediaItem) {
+    const targetUrl = item.fileUrl || item.downloadUrl || item.thumbnailUrl;
+    if (targetUrl) {
+      window.open(targetUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+    setEditing(item);
+  }
+
   if (hydrating) return <AdminDashboardSkeleton />;
 
   return (
     <main className="admin-page">
+      <div className="top-ribbon">
+        <div className="container ribbon-inner">
+          <span><HeartPulse size={15} /> ศูนย์สื่อสารความเสี่ยงด้านสุขภาพ จังหวัดสตูล</span>
+          <span>ข้อมูลเพื่อประชาชน • ใช้งานและเผยแพร่ต่อได้</span>
+        </div>
+      </div>
+
       <header className="admin-header">
         <div className="container admin-nav">
           <Link className="brand" href="/">
             <span className="brand-mark">
               <img src="/satun-risk-logo.png" alt="" aria-hidden="true" />
             </span>
-            <span><strong>ระบบจัดการสื่อ</strong><small>สำนักงานสาธารณสุขจังหวัดสตูล</small></span>
+            <span>
+              <strong>คลังสื่อสารความเสี่ยง</strong>
+              <small>สำนักงานสาธารณสุขจังหวัดสตูล</small>
+            </span>
           </Link>
           <div className="admin-nav-actions">
-            <Link href="/admin/profile">โปรไฟล์ของฉัน</Link>
+            <Link className="admin-nav-link" href="/#phases">แจ้งเหตุการณ์</Link>
+            <Link className="admin-nav-link" href="/#gallery">คลังสื่อ</Link>
+            <Link className="admin-nav-link" href="/#about">เกี่ยวกับเรา</Link>
+            <Link className="admin-nav-link" href="/admin/profile">โปรไฟล์ของฉัน</Link>
             {isManagerRole(currentUser.role) && (
-              <Link href="/admin/users">จัดการสมาชิก</Link>
+              <Link className="admin-nav-link" href="/admin/users">จัดการสมาชิก</Link>
             )}
-            <a href="/" target="_blank"><Eye size={17} /> ดูหน้าเว็บไซต์</a>
-            <button type="button" onClick={() => void signOut({ callbackUrl: "/" })}>
-              <LogOut size={17} /> ออกจากระบบ
+            <button
+              className="admin-nav-cta"
+              type="button"
+              onClick={() => void signOut({ callbackUrl: "/" })}
+              title="ออกจากระบบผู้ดูแล"
+            >
+              <span>ออกจากระบบ</span>
+              <LogOut size={15} />
             </button>
           </div>
         </div>
       </header>
 
-      <div className="container admin-content">
-        <section className="admin-title-row">
-          <div>
-            <span className="section-kicker">CONTENT MANAGEMENT</span>
-            <h1>จัดการคลังสื่อ</h1>
-            <p>{currentUser.firstName} {currentUser.lastName} • {currentUser.position} • อัปโหลดข้อมูลไปยังบัญชี Google ของหน่วยงาน</p>
+      <section className="admin-hero-banner">
+        <div className="container admin-hero-inner">
+          <div className="admin-title-row">
+            <div className="admin-title-copy">
+              <span className="section-kicker">CONTENT MANAGEMENT</span>
+              <h1>จัดการคลังสื่อ</h1>
+              <p>
+                {currentUser.firstName} {currentUser.lastName} • {currentUser.position} • อัปโหลดข้อมูลไปยังบัญชี Google ของหน่วยงาน
+              </p>
+            </div>
           </div>
-          <div className="admin-title-actions">
-            <button className="refresh-button" type="button" onClick={() => void checkConnection()} disabled={checking}>
-              <RefreshCw className={checking ? "spin" : ""} size={17} /> ตรวจสอบการเชื่อมต่อ
-            </button>
+
+          <section className={status?.connected ? "connection-banner connected" : "connection-banner pending"}>
+            <span className="connection-icon">{status?.connected ? <FolderCheck size={24} /> : <Link2 size={24} />}</span>
+            <div>
+              <strong>{status?.connected ? "เชื่อมต่อ Google พร้อมใช้งาน" : "กำลังตรวจสอบการเชื่อมต่อ Google"}</strong>
+              <p>{status?.message || (status?.connected ? "เชื่อมต่อ Google สำเร็จ" : "โปรดรอสักครู่")}</p>
+              {status?.connected && (
+                <small>
+                  Drive: {status.folderName || "คลังสื่อสารความเสี่ยง สสจ.สตูล"} • Sheets: {status.sheetName || "ฐานข้อมูลคลังสื่อสารความเสี่ยง สสจ.สตูล"}
+                </small>
+              )}
+            </div>
             <button
-              className="admin-add-media"
               type="button"
-              onClick={toggleUploadForm}
-              disabled={!status?.connected}
-              aria-expanded={showUploadForm}
-              aria-controls="upload-media"
+              className="connection-state"
+              onClick={() => void checkConnection()}
+              disabled={checking}
+              title="คลิกเพื่อตรวจสอบสถานะการเชื่อมต่ออีกครั้ง"
             >
-              {showUploadForm ? <X size={17} /> : <Plus size={17} />}
-              {showUploadForm ? "ปิดฟอร์ม" : "เพิ่มสื่อใหม่"}
+              {checking ? (
+                <><RefreshCw className="spin" size={14} /> กำลังตรวจสอบ</>
+              ) : status?.connected ? (
+                <><Check size={15} /> พร้อมใช้งาน</>
+              ) : (
+                <><RefreshCw size={14} /> ตรวจสอบอีกครั้ง</>
+              )}
             </button>
-          </div>
-        </section>
+          </section>
+        </div>
+      </section>
 
-        <section className={status?.connected ? "connection-banner connected" : "connection-banner pending"}>
-          <span className="connection-icon">{status?.connected ? <FolderCheck size={25} /> : <Link2 size={25} />}</span>
-          <div>
-            <strong>{status?.connected ? "เชื่อมต่อ Google พร้อมใช้งาน" : "กำลังตรวจสอบการเชื่อมต่อ Google"}</strong>
-            <p>{status?.message || "โปรดรอสักครู่"}</p>
-            {status?.connected && (
-              <small>Drive: {status.folderName || "โฟลเดอร์สื่อ"} • Sheets: {status.sheetName || "ฐานข้อมูลสื่อ"}</small>
-            )}
-          </div>
-          <span className="connection-state">{status?.connected ? <><Check size={15} /> พร้อมใช้งาน</> : "กำลังตรวจสอบ"}</span>
-        </section>
-
+      <div className="container admin-content">
         {status && !status.connected && (
           <section className="setup-panel">
             <div className="setup-heading">
               <span className="setup-number">3</span>
-              <div><h2>ขั้นตอนเชื่อมต่อบัญชี Google ของคุณ</h2><p>ทำครั้งเดียว จากนั้นระบบจะสร้างโฟลเดอร์และชีตให้โดยอัตโนมัติ</p></div>
+              <div><h2>ขั้นตอนเชื่อมต่อบัญชี Google ของคุณ</h2><p>ทำครั้งเดียว จากนั้นระบบจะสร้างโฟลเดอร์และชีตให้โดยอัปโนมัติ</p></div>
             </div>
             <div className="setup-steps">
               <article>
@@ -651,26 +735,42 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
           </article>
         </section>
 
-        <nav className="admin-tab-nav" aria-label="เมนูระบบบริหารจัดการ">
-          <button
-            type="button"
-            className={activeTab === "library" ? "admin-tab-button is-active" : "admin-tab-button"}
-            onClick={() => setActiveTab("library")}
-          >
-            <FileImage size={18} />
-            <span>คลังสื่อทั้งหมด</span>
-            <span className="tab-badge">{items.length}</span>
-          </button>
-          <button
-            type="button"
-            className={activeTab === "settings" ? "admin-tab-button is-active" : "admin-tab-button"}
-            onClick={() => setActiveTab("settings")}
-          >
-            <ShieldCheck size={18} />
-            <span>จัดการข้อมูลพื้นฐาน</span>
-            <span className="tab-badge">{categories.length} ประเภท</span>
-          </button>
-        </nav>
+        <div className="admin-tab-row">
+          <nav className="admin-tab-nav" aria-label="เมนูระบบบริหารจัดการ">
+            <button
+              type="button"
+              className={activeTab === "library" ? "admin-tab-button is-active" : "admin-tab-button"}
+              onClick={() => setActiveTab("library")}
+            >
+              <FileImage size={18} />
+              <span>คลังสื่อทั้งหมด</span>
+              <span className="tab-badge">{items.length}</span>
+            </button>
+            <button
+              type="button"
+              className={activeTab === "settings" ? "admin-tab-button is-active" : "admin-tab-button"}
+              onClick={() => setActiveTab("settings")}
+            >
+              <ShieldCheck size={18} />
+              <span>จัดการข้อมูลพื้นฐาน</span>
+              <span className="tab-badge">{categories.length} ประเภท</span>
+            </button>
+          </nav>
+
+          <div className="admin-title-actions">
+            <button
+              className="admin-add-media"
+              type="button"
+              onClick={toggleUploadForm}
+              disabled={!status?.connected}
+              aria-expanded={showUploadForm}
+              aria-controls="upload-media"
+            >
+              {showUploadForm ? <X size={17} /> : <Plus size={17} />}
+              {showUploadForm ? "ปิดฟอร์ม" : "เพิ่มสื่อใหม่"}
+            </button>
+          </div>
+        </div>
 
         {activeTab === "library" ? (
           <section className="media-library-panel" aria-labelledby="media-library-title">
@@ -707,7 +807,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                     setMediaQuery(event.target.value);
                     setMediaPage(1);
                   }}
-                  placeholder="ค้นหาชื่อสื่อ พื้นที่ ประเภท คำค้น หรือผู้อัปโหลด"
+                  placeholder="ค้นหาชื่อสื่อ พื้นที่ ประเภท คำค้น หรือผู้อัปโหลด..."
                 />
                 {mediaQuery && (
                   <button type="button" onClick={() => { setMediaQuery(""); setMediaPage(1); }} aria-label="ล้างคำค้น">
@@ -762,8 +862,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
 
             <div className="library-result-row">
               <p>
-                แสดง <strong>{filteredItems.length}</strong> จาก {items.length} รายการ
-                {mediaPageCount > 1 && <> • หน้า {activeMediaPage} จาก {mediaPageCount}</>}
+                แสดง <strong>{startItemIndex} - {endItemIndex}</strong> จาก <strong>{filteredItems.length}</strong> รายการ
               </p>
               {hasActiveMediaFilters && (
                 <button type="button" onClick={resetMediaFilters}><RotateCcw size={15} /> ล้างตัวกรอง</button>
@@ -800,7 +899,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                       ) : (
                         <FileImage size={24} />
                       )}
-                      <span>{item.fileType.includes("pdf") ? "PDF" : "ภาพ"}</span>
+                      {item.fileType.includes("pdf") && <span>PDF</span>}
                     </div>
                     <div className="library-item-main">
                       <div className="library-item-title-row">
@@ -812,7 +911,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                       <p>{item.category} • {phaseLabels[item.phase]} • {item.location}</p>
                       <div className="library-item-meta">
                         <span><CalendarDays size={13} /> เหตุการณ์ {formatThaiDate(item.eventDate)}</span>
-                        {item.uploadedBy && <span>โดย {item.uploadedBy}</span>}
+                        {item.uploadedBy && <span><UserRound size={13} /> โดย {item.uploadedBy}</span>}
                         {item.revisionCount ? <span>แก้ไข {item.revisionCount} ครั้ง</span> : null}
                       </div>
                     </div>
@@ -821,11 +920,44 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                       <strong>{formatThaiDateTime(item.createdAt)}</strong>
                     </div>
                     <div className="manager-actions library-actions">
-                      <button type="button" disabled={!status?.connected || source === "demo"} onClick={() => setEditing(item)} aria-label={`แก้ไข ${item.title}`} title="แก้ไขข้อมูล"><Pencil size={15} /><span>แก้ไข</span></button>
-                      <button type="button" disabled={!status?.connected || source === "demo"} onClick={() => void openHistory(item)} aria-label={`ดูประวัติ ${item.title}`} title="ประวัติการแก้ไข"><History size={15} /><span>ประวัติ</span></button>
+                      <button
+                        type="button"
+                        disabled={!status?.connected || source === "demo"}
+                        onClick={() => setEditing(item)}
+                        aria-label={`แก้ไข ${item.title}`}
+                        title="แก้ไขข้อมูล"
+                      >
+                        <Pencil size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!status?.connected || source === "demo"}
+                        onClick={() => void openHistory(item)}
+                        aria-label={`ดูประวัติ ${item.title}`}
+                        title="ประวัติการแก้ไข"
+                      >
+                        <BarChart2 size={15} />
+                      </button>
                       {isManagerRole(currentUser.role) && (
-                        <button className="delete-action" type="button" disabled={!status?.connected || source === "demo"} onClick={() => void deleteItem(item)} aria-label={`ลบ ${item.title}`} title="ลบรายการ"><Trash2 size={15} /><span>ลบ</span></button>
+                        <button
+                          className="delete-action"
+                          type="button"
+                          disabled={!status?.connected || source === "demo"}
+                          onClick={() => void deleteItem(item)}
+                          aria-label={`ลบ ${item.title}`}
+                          title="ลบรายการ"
+                        >
+                          <Trash2 size={15} />
+                        </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => openMediaPreview(item)}
+                        aria-label={`ดูรายละเอียด ${item.title}`}
+                        title="เปิดดูไฟล์สื่อ"
+                      >
+                        <MoreVertical size={15} />
+                      </button>
                     </div>
                   </article>
                 ))}
@@ -839,14 +971,42 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
               </div>
             )}
 
-            {filteredItems.length > MEDIA_PAGE_SIZE && (
+            {filteredItems.length > 0 && (
               <nav className="library-pagination" aria-label="หน้ารายการสื่อ">
-                <button type="button" onClick={() => setMediaPage((current) => Math.max(1, current - 1))} disabled={activeMediaPage === 1}>
-                  <ChevronLeft size={17} /> ก่อนหน้า
+                <button
+                  type="button"
+                  className="page-arrow"
+                  onClick={() => setMediaPage((current) => Math.max(1, current - 1))}
+                  disabled={activeMediaPage === 1}
+                  aria-label="หน้าก่อนหน้า"
+                >
+                  <ChevronLeft size={16} />
                 </button>
-                <span>หน้า <strong>{activeMediaPage}</strong> / {mediaPageCount}</span>
-                <button type="button" onClick={() => setMediaPage((current) => Math.min(mediaPageCount, current + 1))} disabled={activeMediaPage === mediaPageCount}>
-                  ถัดไป <ChevronRight size={17} />
+                {paginationPages.map((entry, idx) =>
+                  entry === "ellipsis" ? (
+                    <span className="page-ellipsis" key={`ellipsis-${idx}`}>
+                      ...
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      key={entry}
+                      className={entry === activeMediaPage ? "page-number is-active" : "page-number"}
+                      onClick={() => setMediaPage(entry)}
+                      aria-current={entry === activeMediaPage ? "page" : undefined}
+                    >
+                      {entry}
+                    </button>
+                  ),
+                )}
+                <button
+                  type="button"
+                  className="page-arrow"
+                  onClick={() => setMediaPage((current) => Math.min(mediaPageCount, current + 1))}
+                  disabled={activeMediaPage === mediaPageCount}
+                  aria-label="หน้าถัดไป"
+                >
+                  <ChevronRight size={16} />
                 </button>
               </nav>
             )}
@@ -1009,6 +1169,77 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
           </section>
         )}
       </div>
+
+      <section className="trust-section">
+        <div className="container trust-grid">
+          <div className="trust-copy">
+            <span className="section-kicker">OUR VALUE</span>
+            <h2>ข้อมูลที่ชัดเจน<br />ช่วยให้ชุมชนตัดสินใจได้ดีขึ้น</h2>
+            <p>
+              ร่วมสร้างสังคมสุขภาพดี ด้วยสื่อสารความเสี่ยงที่ถูกต้อง เชื่อถือได้
+              เพื่อคนสตูลและอนาคตที่ปลอดภัยกว่าเดิม
+            </p>
+          </div>
+          <div className="trust-points">
+            <div className="trust-point-card">
+              <span className="trust-icon-ring"><ShieldCheck size={24} /></span>
+              <strong>ถูกต้องและเชื่อถือได้</strong>
+              <small>ผ่านการตรวจสอบจากสำนักงานสาธารณสุขจังหวัดสตูล</small>
+            </div>
+            <div className="trust-point-card">
+              <span className="trust-icon-ring"><Share2 size={24} /></span>
+              <strong>นำไปใช้และแชร์ได้ง่าย</strong>
+              <small>หลากหลายรูปแบบสื่อ พร้อมดาวน์โหลดทันที</small>
+            </div>
+            <div className="trust-point-card">
+              <span className="trust-icon-ring"><MapPin size={24} /></span>
+              <strong>ตอบโจทย์พื้นที่</strong>
+              <small>เนื้อหาที่เหมาะสมกับบริบทของจังหวัดสตูล</small>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <footer className="site-footer">
+        <div className="container footer-grid">
+          <div className="footer-brand">
+            <span className="brand-mark">
+              <img src="/satun-risk-logo.png" alt="" aria-hidden="true" />
+            </span>
+            <div><strong>คลังสื่อสารความเสี่ยง</strong><small>สำนักงานสาธารณสุขจังหวัดสตูล</small></div>
+          </div>
+          <div className="footer-center">
+            <nav className="footer-nav footer-nav-links" aria-label="ลิงก์ส่วนท้าย">
+              <Link href="/">หน้าแรก</Link>
+              <Link href="/#phases">ข้อมูลสถานการณ์</Link>
+              <Link href="/#gallery">คลังสื่อ</Link>
+              <Link href="/#about">เกี่ยวกับเรา</Link>
+              <Link href="/developers">API สำหรับนักพัฒนา <Braces size={14} /></Link>
+              <Link href="/admin">เข้าสู่ระบบผู้ดูแล <ArrowRight size={14} /></Link>
+            </nav>
+            <div className="footer-credit">
+              <p>จัดทำโดย นายอรรฆพร ศรีปานรอด นักวิชาการคอมพิวเตอร์ปฏิบัติการ • กลุ่มงานสุขภาพดิจิทัล สำนักงานสาธารณสุขจังหวัดสตูล</p>
+            </div>
+          </div>
+          <div className="footer-actions">
+            <span className="visitor-counter" title="นับหนึ่งครั้งต่อการเข้าใช้งานในแต่ละรอบ">
+              <Eye size={15} />
+              {visitorStats ? (
+                <>ผู้เข้าชม {visitorStats.totalViews.toLocaleString("th-TH")} ครั้ง</>
+              ) : (
+                <>
+                  <span className="sr-only">กำลังโหลดยอดผู้เข้าชม</span>
+                  <span className="skeleton-block skeleton-visitor-count" aria-hidden="true" />
+                </>
+              )}
+            </span>
+            <div className="footer-social" aria-hidden="true">
+              <span><Globe size={16} /></span>
+              <span><HeartPulse size={16} /></span>
+            </div>
+          </div>
+        </div>
+      </footer>
 
       {editing && (
         <div className="admin-modal-backdrop" onMouseDown={() => !savingEdit && setEditing(null)}>
