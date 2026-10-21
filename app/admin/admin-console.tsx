@@ -41,7 +41,7 @@ import { signOut } from "next-auth/react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { isManagerRole, type PortalUser } from "../auth-types";
 import { clearMediaCache } from "../media-cache";
-import type { MediaItem, MediaResponse, MediaRevision, SiteStatsResponse } from "../types";
+import type { MediaItem, MediaResponse, MediaRevision, VisitorStats } from "../types";
 import { AdminDashboardSkeleton } from "./admin-skeleton";
 
 type ConnectionStatus = {
@@ -178,7 +178,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [historyItem, setHistoryItem] = useState<MediaItem | null>(null);
   const [historyEntries, setHistoryEntries] = useState<MediaRevision[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [visitorStats, setVisitorStats] = useState<SiteStatsResponse | null>(null);
+  const [visitorStats, setVisitorStats] = useState<VisitorStats | null>(null);
 
   // System Categories state for Basic Settings management
   const [systemCategories, setSystemCategories] = useState<string[]>(DEFAULT_CATEGORIES);
@@ -210,7 +210,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     try {
       const response = await fetch("/api/analytics/stats", { cache: "no-store" });
       if (response.ok) {
-        const result = (await response.json()) as SiteStatsResponse;
+        const result = (await response.json()) as VisitorStats;
         if (typeof result.totalViews === "number") {
           setVisitorStats(result);
         }
@@ -596,7 +596,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   }
 
   function openMediaPreview(item: MediaItem) {
-    const targetUrl = item.fileUrl || item.downloadUrl || item.thumbnailUrl;
+    const targetUrl = item.downloadUrl || item.thumbnailUrl;
     if (targetUrl) {
       window.open(targetUrl, "_blank", "noopener,noreferrer");
       return;
