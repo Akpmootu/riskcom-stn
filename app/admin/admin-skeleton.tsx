@@ -1,4 +1,4 @@
-import { Image as ImageIcon } from "lucide-react";
+import { Image as ImageIcon, Menu } from "lucide-react";
 
 function Block({ className = "" }: { className?: string }) {
   return <span className={`skeleton-block ${className}`} aria-hidden="true" />;
@@ -7,42 +7,53 @@ function Block({ className = "" }: { className?: string }) {
 export function AdminDashboardSkeleton() {
   return (
     <main
-      className="admin-page admin-system-skeleton"
+      className="admin-page site-shell admin-system-skeleton"
       aria-busy="true"
       aria-describedby="admin-loading-status"
     >
-      <header className="admin-header">
-        <div className="container admin-nav">
+      <header className="site-header">
+        <div className="container nav-wrap">
           <div className="brand">
             <span className="brand-mark">
               <img src="/satun-risk-logo.png" alt="" aria-hidden="true" />
             </span>
             <span>
-              <strong>ระบบจัดการสื่อ</strong>
+              <strong>คลังสื่อสารความเสี่ยง</strong>
               <small>สำนักงานสาธารณสุขจังหวัดสตูล</small>
             </span>
           </div>
-          <div className="admin-skeleton-nav" aria-hidden="true">
-            <Block /><Block /><Block />
+          <div className="skeleton-nav" aria-hidden="true">
+            <Block />
+            <Block />
+            <Block />
+            <Block className="skeleton-nav-admin" />
           </div>
+          <span className="skeleton-mobile-menu" aria-hidden="true">
+            <Menu size={22} />
+          </span>
         </div>
       </header>
 
-      <div className="container admin-content">
-        <div className="admin-loading-status" id="admin-loading-status" role="status" aria-live="polite">
-          <span className="skeleton-loading-dot" aria-hidden="true" />
-          กำลังโหลดข้อมูลระบบจัดการ กรุณารอสักครู่
+      <section className="admin-hero-banner">
+        <div className="hero-pattern" />
+        <div className="container admin-hero-inner">
+          <div className="admin-loading-status" id="admin-loading-status" role="status" aria-live="polite">
+            <span className="skeleton-loading-dot" aria-hidden="true" />
+            กำลังโหลดข้อมูลระบบจัดการ กรุณารอสักครู่
+          </div>
+
+          <section className="admin-title-row admin-skeleton-title" aria-hidden="true">
+            <div><Block /><Block /><Block /></div>
+            <div><Block /><Block /></div>
+          </section>
+
+          <section className="connection-banner admin-skeleton-connection" aria-hidden="true">
+            <Block /><div><Block /><Block /></div><Block />
+          </section>
         </div>
+      </section>
 
-        <section className="admin-title-row admin-skeleton-title" aria-hidden="true">
-          <div><Block /><Block /><Block /></div>
-          <div><Block /><Block /></div>
-        </section>
-
-        <section className="connection-banner admin-skeleton-connection" aria-hidden="true">
-          <Block /><div><Block /><Block /></div><Block />
-        </section>
-
+      <div className="container admin-content">
         <section className="media-overview admin-skeleton-overview" aria-hidden="true">
           {[0, 1, 2, 3].map((item) => (
             <article key={item}><Block /><Block /><Block /></article>

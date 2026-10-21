@@ -1,4 +1,11 @@
-import { ArrowLeft, UsersRound } from "lucide-react";
+import {
+  ArrowLeft,
+  FileText,
+  Home,
+  Info,
+  UserRound,
+  UsersRound,
+} from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { isManagerRole } from "@/app/auth-types";
@@ -19,18 +26,36 @@ export default async function UserManagementPage() {
   const users = await listPortalUsers();
 
   return (
-    <main className="member-page user-management-page">
-      <header className="member-header">
-        <Link href="/" className="brand">
-          <span className="brand-mark">
-            <img src="/satun-risk-logo.png" alt="" aria-hidden="true" />
-          </span>
-          <span>
-            <strong>จัดการสมาชิก</strong>
-            <small>คลังสื่อสารความเสี่ยง จังหวัดสตูล</small>
-          </span>
-        </Link>
-        <PortalSignOutButton />
+    <main className="member-page user-management-page site-shell">
+      <header className="site-header">
+        <div className="container nav-wrap">
+          <Link href="/" className="brand">
+            <span className="brand-mark">
+              <img src="/satun-risk-logo.png" alt="" aria-hidden="true" />
+            </span>
+            <span>
+              <strong>คลังสื่อสารความเสี่ยง</strong>
+              <small>สำนักงานสาธารณสุขจังหวัดสตูล</small>
+            </span>
+          </Link>
+          <nav className="nav-links" aria-label="เมนูหลัก">
+            <Link className="nav-item" href="/">
+              <Home size={16} /> หน้าแรก
+            </Link>
+            <Link className="nav-item" href="/admin">
+              <FileText size={16} /> จัดการคลังสื่อ
+            </Link>
+            <Link className="nav-item" href="/admin/profile">
+              <UserRound size={16} /> โปรไฟล์ของฉัน
+            </Link>
+            <Link className="nav-item is-active" href="/admin/users">
+              <Info size={16} /> จัดการสมาชิก
+            </Link>
+            <div className="nav-right-group">
+              <PortalSignOutButton />
+            </div>
+          </nav>
+        </div>
       </header>
 
       <div className="member-shell user-management-shell">

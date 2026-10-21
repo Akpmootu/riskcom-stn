@@ -1,11 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import {
-  ArrowLeft,
+  ArrowRight,
   Braces,
   CheckCircle2,
   Database,
   ExternalLink,
+  FileText,
+  Home,
+  Info,
+  ShieldCheck,
+  UserRound,
 } from "lucide-react";
 
 export const metadata: Metadata = {
@@ -51,10 +56,10 @@ export default function DevelopersPage() {
     process.env.NEXT_PUBLIC_SITE_URL || "https://riskcom-stn.vercel.app";
 
   return (
-    <main className="developer-page">
-      <header className="developer-header">
-        <div className="container developer-nav">
-          <Link className="developer-brand" href="/">
+    <main className="developer-page site-shell">
+      <header className="site-header">
+        <div className="container nav-wrap">
+          <Link className="brand" href="/">
             <span className="brand-mark">
               <img src="/satun-risk-logo.png" alt="" />
             </span>
@@ -63,9 +68,25 @@ export default function DevelopersPage() {
               <small>สำนักงานสาธารณสุขจังหวัดสตูล</small>
             </span>
           </Link>
-          <Link className="developer-back" href="/">
-            <ArrowLeft size={17} /> กลับหน้าคลังสื่อ
-          </Link>
+          <nav className="nav-links" aria-label="เมนูหลัก">
+            <Link className="nav-item" href="/">
+              <Home size={16} /> หน้าแรก
+            </Link>
+            <Link className="nav-item" href="/#phases">
+              <ShieldCheck size={16} /> ข้อมูลสถานการณ์
+            </Link>
+            <Link className="nav-item" href="/#gallery">
+              <FileText size={16} /> คลังสื่อ
+            </Link>
+            <Link className="nav-item" href="/#about">
+              <Info size={16} /> เกี่ยวกับเรา
+            </Link>
+            <div className="nav-right-group">
+              <Link className="admin-link" href="/admin">
+                <UserRound size={15} /> สำหรับผู้ดูแลระบบ <ArrowRight size={15} />
+              </Link>
+            </div>
+          </nav>
         </div>
       </header>
 

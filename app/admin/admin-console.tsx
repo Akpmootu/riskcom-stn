@@ -18,10 +18,13 @@ import {
   Globe,
   HeartPulse,
   History,
+  Home,
+  Info,
   Link2,
   LoaderCircle,
   LogOut,
   MapPin,
+  Menu,
   MoreVertical,
   Pencil,
   Plus,
@@ -31,9 +34,11 @@ import {
   Search,
   Share2,
   ShieldCheck,
+  Sparkles,
   Trash2,
   Upload,
   UserRound,
+  WandSparkles,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -41,7 +46,13 @@ import { signOut } from "next-auth/react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { isManagerRole, type PortalUser } from "../auth-types";
 import { clearMediaCache } from "../media-cache";
-import type { MediaItem, MediaResponse, MediaRevision, VisitorStats } from "../types";
+import type {
+  IncidentPhase,
+  MediaItem,
+  MediaResponse,
+  MediaRevision,
+  VisitorStats,
+} from "../types";
 import { AdminDashboardSkeleton } from "./admin-skeleton";
 
 type ConnectionStatus = {
@@ -55,6 +66,21 @@ type ConnectionStatus = {
 type MediaSort = "created-desc" | "created-asc" | "event-desc" | "event-asc" | "title";
 type MediaStatusFilter = "all" | MediaItem["status"];
 type MediaPhaseFilter = "all" | MediaItem["phase"];
+
+type AiSuggestionResponse = {
+  ok?: boolean;
+  error?: string;
+  suggestion?: {
+    title: string;
+    phase: IncidentPhase;
+    category: string;
+    description: string;
+    altText: string;
+    keywords: string[];
+    location: string;
+    extractedText?: string;
+  };
+};
 
 const MEDIA_PAGE_SIZE = 8;
 
@@ -75,6 +101,49 @@ const changedFieldLabels: Record<string, string> = {
   altText: "คำบรรยายภาพ",
   status: "สถานะ",
 };
+
+function todayIsoDate() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+async function createCompressedImageDataUrl(file: File, maxDimension = 1280): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("ไม่สามารถอ่านไฟล์รูปภาพได้"));
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (!result) {
+        reject(new Error("ไม่พบข้อมูลรูปภาพ"));
+        return;
+      }
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxDimension / Math.max(img.width || 1, img.height || 1));
+        const width = Math.max(1, Math.round(img.width * scale));
+        const height = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(result);
+          return;
+        }
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", 0.84));
+      };
+      img.onerror = () => resolve(result);
+      img.src = result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 function formatThaiDateTime(value: string) {
   if (!value) return "ไม่ระบุเวลา";
@@ -152,6 +221,7 @@ const DEFAULT_CATEGORIES = [
 ];
 
 export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"library" | "settings">("library");
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [checking, setChecking] = useState(true);
@@ -167,10 +237,27 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [mediaMonth, setMediaMonth] = useState("all");
   const [mediaSort, setMediaSort] = useState<MediaSort>("created-desc");
   const [mediaPage, setMediaPage] = useState(1);
+
+  // Popup Upload Modal & AI Auto-Fill State
   const [showUploadForm, setShowUploadForm] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const [aiStatusMessage, setAiStatusMessage] = useState<{
+    type: "info" | "success" | "error";
+    text: string;
+  } | null>(null);
+  const [uploadTitle, setUploadTitle] = useState("");
+  const [uploadPhase, setUploadPhase] = useState<IncidentPhase>("before");
+  const [uploadCategory, setUploadCategory] = useState("น้ำท่วม");
+  const [uploadEventDate, setUploadEventDate] = useState(todayIsoDate);
+  const [uploadLocation, setUploadLocation] = useState("จังหวัดสตูล");
+  const [uploadDescription, setUploadDescription] = useState("");
+  const [uploadAltText, setUploadAltText] = useState("");
+  const [uploadKeywords, setUploadKeywords] = useState("");
+  const [uploadStatus, setUploadStatus] = useState<MediaItem["status"]>("published");
+
   const [formMessage, setFormMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState<MediaItem | null>(null);
@@ -187,6 +274,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [categoryMessage, setCategoryMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const fileInput = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void Promise.allSettled([
@@ -210,9 +298,11 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     try {
       const response = await fetch("/api/analytics/stats", { cache: "no-store" });
       if (response.ok) {
-        const result = (await response.json()) as VisitorStats;
-        if (typeof result.totalViews === "number") {
-          setVisitorStats(result);
+        const result = (await response.json()) as { stats?: VisitorStats } & Partial<VisitorStats>;
+        if (result.stats && typeof result.stats.totalViews === "number") {
+          setVisitorStats(result.stats);
+        } else if (typeof result.totalViews === "number") {
+          setVisitorStats(result as VisitorStats);
         }
       }
     } catch {
@@ -424,18 +514,110 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     }
   }
 
+  function resetUploadFormFields() {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setFile(null);
+    setPreviewUrl("");
+    setAiAnalyzing(false);
+    setAiStatusMessage(null);
+    setUploadTitle("");
+    setUploadPhase("before");
+    setUploadCategory(categories[0] || "น้ำท่วม");
+    setUploadEventDate(todayIsoDate());
+    setUploadLocation("จังหวัดสตูล");
+    setUploadDescription("");
+    setUploadAltText("");
+    setUploadKeywords("");
+    setUploadStatus("published");
+  }
+
+  async function analyzeFileWithAi(targetFile: File) {
+    setAiAnalyzing(true);
+    setAiStatusMessage({
+      type: "info",
+      text: "AI กำลังอ่านข้อความและวิเคราะห์รูปภาพเพื่อสร้างข้อมูลอัตโนมัติ...",
+    });
+
+    try {
+      let imageDataUrl = "";
+      if (targetFile.type.startsWith("image/")) {
+        imageDataUrl = await createCompressedImageDataUrl(targetFile, 1280);
+      }
+
+      const response = await fetch("/api/admin/ai-assist", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          imageDataUrl,
+          fileName: targetFile.name,
+          categories,
+        }),
+      });
+
+      const result = (await response.json()) as AiSuggestionResponse;
+      if (!response.ok || !result.ok || !result.suggestion) {
+        throw new Error(result.error || "ไม่สามารถวิเคราะห์ภาพด้วย AI ได้");
+      }
+
+      const { suggestion } = result;
+      if (suggestion.title) setUploadTitle(suggestion.title);
+      if (suggestion.phase) setUploadPhase(suggestion.phase);
+      if (suggestion.category) setUploadCategory(suggestion.category);
+      if (suggestion.description) setUploadDescription(suggestion.description);
+      if (suggestion.altText) setUploadAltText(suggestion.altText);
+      if (Array.isArray(suggestion.keywords) && suggestion.keywords.length > 0) {
+        setUploadKeywords(suggestion.keywords.join(", "));
+      }
+      if (suggestion.location) setUploadLocation(suggestion.location);
+      if (!uploadEventDate) setUploadEventDate(todayIsoDate());
+
+      setAiStatusMessage({
+        type: "success",
+        text: "AI วิเคราะห์ภาพและเติมชื่อสื่อ ช่วงเหตุการณ์ ประเภท คำอธิบาย และคำบรรยายให้เรียบร้อยแล้ว (แก้ไขเพิ่มเติมได้ตามต้องการ)",
+      });
+    } catch (error) {
+      setAiStatusMessage({
+        type: "error",
+        text:
+          error instanceof Error
+            ? `${error.message} — คุณยังสามารถกรอกและแก้ไขข้อมูลด้วยตนเองได้`
+            : "วิเคราะห์ภาพไม่สำเร็จ คุณสามารถกรอกข้อมูลด้วยตนเองได้",
+      });
+    } finally {
+      setAiAnalyzing(false);
+    }
+  }
+
   function chooseFile(nextFile: File | null) {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setFile(nextFile);
-    setPreviewUrl(nextFile?.type.startsWith("image/") ? URL.createObjectURL(nextFile) : "");
+    const nextPreview = nextFile?.type.startsWith("image/")
+      ? URL.createObjectURL(nextFile)
+      : "";
+    setPreviewUrl(nextPreview);
+
+    if (nextFile) {
+      void analyzeFileWithAi(nextFile);
+    } else {
+      setAiStatusMessage(null);
+    }
   }
 
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!file || !status?.connected) return;
-    const form = event.currentTarget;
-    const data = new FormData(form);
+    const data = new FormData();
     data.set("file", file);
+    data.set("title", uploadTitle.trim());
+    data.set("phase", uploadPhase);
+    data.set("category", uploadCategory);
+    data.set("eventDate", uploadEventDate);
+    data.set("location", uploadLocation.trim());
+    data.set("description", uploadDescription.trim());
+    data.set("altText", uploadAltText.trim());
+    data.set("keywords", uploadKeywords.trim());
+    data.set("status", uploadStatus);
+
     setUploading(true);
     setFormMessage(null);
     try {
@@ -445,15 +627,21 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       });
       const result = (await response.json()) as { ok?: boolean; error?: string };
       if (!response.ok || !result.ok) throw new Error(result.error || "บันทึกสื่อไม่สำเร็จ");
-      form.reset();
-      chooseFile(null);
+      resetUploadFormFields();
+      setShowUploadForm(false);
       clearMediaCache();
-      setFormMessage({ type: "success", text: "บันทึกไฟล์ใน Google Drive และเพิ่มข้อมูลใน Google Sheets แล้ว" });
+      setFormMessage({
+        type: "success",
+        text: "บันทึกไฟล์ใน Google Drive และเพิ่มข้อมูลใน Google Sheets เรียบร้อยแล้ว",
+      });
       await loadItems();
       setMediaSort("created-desc");
       setMediaPage(1);
     } catch (error) {
-      setFormMessage({ type: "error", text: error instanceof Error ? error.message : "บันทึกสื่อไม่สำเร็จ" });
+      setFormMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "บันทึกสื่อไม่สำเร็จ",
+      });
     } finally {
       setUploading(false);
     }
@@ -580,19 +768,15 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     setMediaPage(1);
   }
 
-  function toggleUploadForm() {
-    setShowUploadForm((current) => {
-      const next = !current;
-      if (!current) {
-        window.setTimeout(() => {
-          document.getElementById("upload-media")?.scrollIntoView({
-            behavior: "smooth",
-            block: "start",
-          });
-        }, 40);
-      }
-      return next;
-    });
+  function openUploadModal() {
+    if (!uploadCategory && categories[0]) {
+      setUploadCategory(categories[0]);
+    }
+    if (!uploadEventDate) {
+      setUploadEventDate(todayIsoDate());
+    }
+    setFormMessage(null);
+    setShowUploadForm(true);
   }
 
   function openMediaPreview(item: MediaItem) {
@@ -607,17 +791,10 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   if (hydrating) return <AdminDashboardSkeleton />;
 
   return (
-    <main className="admin-page">
-      <div className="top-ribbon">
-        <div className="container ribbon-inner">
-          <span><HeartPulse size={15} /> ศูนย์สื่อสารความเสี่ยงด้านสุขภาพ จังหวัดสตูล</span>
-          <span>ข้อมูลเพื่อประชาชน • ใช้งานและเผยแพร่ต่อได้</span>
-        </div>
-      </div>
-
-      <header className="admin-header">
-        <div className="container admin-nav">
-          <Link className="brand" href="/">
+    <main className="admin-page site-shell" id="top">
+      <header className="site-header">
+        <div className="container nav-wrap">
+          <Link className="brand" href="/" aria-label="กลับไปหน้าแรก">
             <span className="brand-mark">
               <img src="/satun-risk-logo.png" alt="" aria-hidden="true" />
             </span>
@@ -626,66 +803,132 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
               <small>สำนักงานสาธารณสุขจังหวัดสตูล</small>
             </span>
           </Link>
-          <div className="admin-nav-actions">
-            <Link className="admin-nav-link" href="/#phases">แจ้งเหตุการณ์</Link>
-            <Link className="admin-nav-link" href="/#gallery">คลังสื่อ</Link>
-            <Link className="admin-nav-link" href="/#about">เกี่ยวกับเรา</Link>
-            <Link className="admin-nav-link" href="/admin/profile">โปรไฟล์ของฉัน</Link>
+          <button
+            className="mobile-menu"
+            type="button"
+            aria-label="เปิดเมนู"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((value) => !value)}
+          >
+            {menuOpen ? <X size={22} /> : <Menu size={22} />}
+          </button>
+          <nav className={menuOpen ? "nav-links is-open" : "nav-links"} aria-label="เมนูหลัก">
+            <Link className="nav-item" href="/" onClick={() => setMenuOpen(false)}>
+              <Home size={16} /> หน้าแรก
+            </Link>
+            <Link className="nav-item" href="/#phases" onClick={() => setMenuOpen(false)}>
+              <ShieldCheck size={16} /> ข้อมูลสถานการณ์
+            </Link>
+            <Link className="nav-item is-active" href="/admin" onClick={() => setMenuOpen(false)}>
+              <FileText size={16} /> จัดการคลังสื่อ
+            </Link>
+            <Link className="nav-item" href="/admin/profile" onClick={() => setMenuOpen(false)}>
+              <UserRound size={16} /> โปรไฟล์ของฉัน
+            </Link>
             {isManagerRole(currentUser.role) && (
-              <Link className="admin-nav-link" href="/admin/users">จัดการสมาชิก</Link>
+              <Link className="nav-item" href="/admin/users" onClick={() => setMenuOpen(false)}>
+                <Info size={16} /> จัดการสมาชิก
+              </Link>
             )}
-            <button
-              className="admin-nav-cta"
-              type="button"
-              onClick={() => void signOut({ callbackUrl: "/" })}
-              title="ออกจากระบบผู้ดูแล"
-            >
-              <span>ออกจากระบบ</span>
-              <LogOut size={15} />
-            </button>
-          </div>
+            <div className="nav-right-group">
+              <button
+                type="button"
+                className="nav-search-trigger"
+                aria-label="ค้นหาในคลังสื่อ"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setActiveTab("library");
+                  searchInputRef.current?.focus();
+                  searchInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+                }}
+              >
+                <Search size={18} />
+              </button>
+              <button
+                type="button"
+                className="admin-link"
+                onClick={() => void signOut({ callbackUrl: "/" })}
+              >
+                <LogOut size={15} /> ออกจากระบบ <ArrowRight size={15} />
+              </button>
+            </div>
+          </nav>
         </div>
       </header>
 
       <section className="admin-hero-banner">
+        <div className="hero-pattern" />
         <div className="container admin-hero-inner">
-          <div className="admin-title-row">
+          <div className="admin-hero-grid">
             <div className="admin-title-copy">
-              <span className="section-kicker">CONTENT MANAGEMENT</span>
+              <span className="eyebrow">
+                <Sparkles size={15} /> CONTENT MANAGEMENT
+              </span>
               <h1>จัดการคลังสื่อ</h1>
               <p>
-                {currentUser.firstName} {currentUser.lastName} • {currentUser.position} • อัปโหลดข้อมูลไปยังบัญชี Google ของหน่วยงาน
+                {currentUser.firstName} {currentUser.lastName} • {currentUser.position} • อัปโหลดข้อมูลไปยังบัญชี Google ของหน่วยงาน พร้อมระบบ AI อ่านข้อมูลจากภาพอัตโนมัติ
               </p>
+
+              <section className={status?.connected ? "connection-banner connected" : "connection-banner pending"}>
+                <span className="connection-icon">
+                  {status?.connected ? <FolderCheck size={24} /> : <Link2 size={24} />}
+                </span>
+                <div>
+                  <strong>{status?.connected ? "เชื่อมต่อ Google พร้อมใช้งาน" : "กำลังตรวจสอบการเชื่อมต่อ Google"}</strong>
+                  <p>{status?.message || (status?.connected ? "เชื่อมต่อ Google สำเร็จ" : "โปรดรอสักครู่")}</p>
+                  {status?.connected && (
+                    <small>
+                      Drive: {status.folderName || "คลังสื่อสารความเสี่ยง สสจ.สตูล"} • Sheets: {status.sheetName || "ฐานข้อมูลคลังสื่อสารความเสี่ยง สสจ.สตูล"}
+                    </small>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="connection-state"
+                  onClick={() => void checkConnection()}
+                  disabled={checking}
+                  title="คลิกเพื่อตรวจสอบสถานะการเชื่อมต่ออีกครั้ง"
+                >
+                  {checking ? (
+                    <><RefreshCw className="spin" size={14} /> กำลังตรวจสอบ</>
+                  ) : status?.connected ? (
+                    <><Check size={15} /> พร้อมใช้งาน</>
+                  ) : (
+                    <><RefreshCw size={14} /> ตรวจสอบอีกครั้ง</>
+                  )}
+                </button>
+              </section>
+            </div>
+
+            <div className="admin-hero-card">
+              <div className="alert-card-head">
+                <span className="alert-badge-pill">
+                  <span className="live-dot" />
+                  <span>AI VISION ASSISTANT</span>
+                </span>
+                <small>{items.length} รายการในคลัง</small>
+              </div>
+              <div className="admin-hero-card-body">
+                <span className="admin-hero-cloud-badge">
+                  <CloudUpload size={28} />
+                </span>
+                <div>
+                  <strong>อัปโหลดสื่อพร้อมวิเคราะห์ภาพด้วย AI</strong>
+                  <p>
+                    เพียงแนบไฟล์ภาพอินโฟกราฟิกหรือโปสเตอร์ ระบบ AI จะอ่านข้อความในภาพเพื่อกำหนดช่วงเหตุการณ์ ประเภท คำอธิบาย และคำบรรยายให้อัตโนมัติ
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="alert-action-btn"
+                onClick={openUploadModal}
+                disabled={!status?.connected}
+              >
+                <WandSparkles size={16} /> เพิ่มสื่อใหม่ด้วย AI <ArrowRight size={16} />
+              </button>
             </div>
           </div>
-
-          <section className={status?.connected ? "connection-banner connected" : "connection-banner pending"}>
-            <span className="connection-icon">{status?.connected ? <FolderCheck size={24} /> : <Link2 size={24} />}</span>
-            <div>
-              <strong>{status?.connected ? "เชื่อมต่อ Google พร้อมใช้งาน" : "กำลังตรวจสอบการเชื่อมต่อ Google"}</strong>
-              <p>{status?.message || (status?.connected ? "เชื่อมต่อ Google สำเร็จ" : "โปรดรอสักครู่")}</p>
-              {status?.connected && (
-                <small>
-                  Drive: {status.folderName || "คลังสื่อสารความเสี่ยง สสจ.สตูล"} • Sheets: {status.sheetName || "ฐานข้อมูลคลังสื่อสารความเสี่ยง สสจ.สตูล"}
-                </small>
-              )}
-            </div>
-            <button
-              type="button"
-              className="connection-state"
-              onClick={() => void checkConnection()}
-              disabled={checking}
-              title="คลิกเพื่อตรวจสอบสถานะการเชื่อมต่ออีกครั้ง"
-            >
-              {checking ? (
-                <><RefreshCw className="spin" size={14} /> กำลังตรวจสอบ</>
-              ) : status?.connected ? (
-                <><Check size={15} /> พร้อมใช้งาน</>
-              ) : (
-                <><RefreshCw size={14} /> ตรวจสอบอีกครั้ง</>
-              )}
-            </button>
-          </section>
         </div>
       </section>
 
@@ -761,13 +1004,13 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
             <button
               className="admin-add-media"
               type="button"
-              onClick={toggleUploadForm}
+              onClick={openUploadModal}
               disabled={!status?.connected}
               aria-expanded={showUploadForm}
-              aria-controls="upload-media"
+              aria-controls="upload-media-modal"
             >
-              {showUploadForm ? <X size={17} /> : <Plus size={17} />}
-              {showUploadForm ? "ปิดฟอร์ม" : "เพิ่มสื่อใหม่"}
+              <Plus size={17} />
+              เพิ่มสื่อใหม่
             </button>
           </div>
         </div>
@@ -802,6 +1045,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                 <Search size={18} />
                 <span className="sr-only">ค้นหาสื่อ</span>
                 <input
+                  ref={searchInputRef}
                   value={mediaQuery}
                   onChange={(event) => {
                     setMediaQuery(event.target.value);
@@ -1094,80 +1338,6 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
             </div>
           </section>
         )}
-
-        {showUploadForm && (
-          <section className="upload-panel admin-upload-panel" id="upload-media">
-            <div className="panel-heading">
-              <div><span className="panel-icon"><CloudUpload size={21} /></span><span><h2>เพิ่มสื่อใหม่</h2><p>รองรับ JPG, PNG, WebP และ PDF ไม่เกิน 10 MB</p></span></div>
-              <button className="close-upload-panel" type="button" onClick={() => setShowUploadForm(false)}><X size={16} /> ปิดฟอร์ม</button>
-            </div>
-            <form onSubmit={handleUpload}>
-              <fieldset disabled={!status?.connected || uploading}>
-                <div
-                  className={file ? "upload-dropzone has-file" : "upload-dropzone"}
-                  onClick={() => fileInput.current?.click()}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    chooseFile(event.dataTransfer.files[0] ?? null);
-                  }}
-                >
-                  <input
-                    ref={fileInput}
-                    type="file"
-                    name="file"
-                    accept=".jpg,.jpeg,.png,.webp,.pdf"
-                    onChange={(event) => chooseFile(event.target.files?.[0] ?? null)}
-                  />
-                  {file ? (
-                    <>
-                      {previewUrl ? <img src={previewUrl} alt="ตัวอย่างไฟล์ที่จะอัปโหลด" /> : <FileText size={34} />}
-                      <div><strong>{file.name}</strong><small>{(file.size / 1024 / 1024).toFixed(2)} MB • คลิกเพื่อเปลี่ยนไฟล์</small></div>
-                      <button type="button" aria-label="นำไฟล์ออก" onClick={(event) => { event.stopPropagation(); chooseFile(null); }}><X size={17} /></button>
-                    </>
-                  ) : (
-                    <>
-                      <span><Upload size={27} /></span>
-                      <strong>ลากไฟล์มาวาง หรือคลิกเพื่อเลือก</strong>
-                      <small>ใช้ภาพความละเอียดชัดเจนและไม่มีข้อมูลส่วนบุคคล</small>
-                    </>
-                  )}
-                </div>
-
-                <div className="form-grid">
-                  <label className="field-wide">ชื่อสื่อ <em>*</em><input name="title" required placeholder="เช่น วิธีเตรียมตัวรับมือน้ำท่วมฉับพลัน" /></label>
-                  <label>ช่วงเหตุการณ์ <em>*</em>
-                    <select name="phase" defaultValue="before">
-                      <option value="before">ก่อนเกิดเหตุ</option>
-                      <option value="during">ระหว่างเกิดเหตุ</option>
-                      <option value="after">หลังเกิดเหตุ</option>
-                    </select>
-                  </label>
-                  <label>ประเภทเหตุการณ์ <em>*</em>
-                    <select name="category" defaultValue={categories[0] || "น้ำท่วม"}>
-                      {categories.map((cat) => (
-                        <option key={cat} value={cat}>{cat}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>วันที่เหตุการณ์ <em>*</em><input type="date" name="eventDate" required /></label>
-                  <label>พื้นที่ <em>*</em><input name="location" required defaultValue="จังหวัดสตูล" /></label>
-                  <label className="field-wide">คำอธิบาย <em>*</em><textarea name="description" rows={4} required placeholder="สรุปสาระสำคัญและกลุ่มเป้าหมายของสื่อ" /></label>
-                  <label className="field-wide">คำบรรยายภาพเพื่อการเข้าถึง <em>*</em><input name="altText" required placeholder="อธิบายสิ่งที่อยู่ในภาพอย่างกระชับ" /></label>
-                  <label className="field-wide">คำค้นหา <span>(คั่นด้วยเครื่องหมายจุลภาค)</span><input name="keywords" placeholder="น้ำท่วม, เตรียมพร้อม, ควนโดน" /></label>
-                  <label>สถานะ
-                    <select name="status" defaultValue="published"><option value="published">เผยแพร่ทันที</option><option value="draft">บันทึกเป็นฉบับร่าง</option></select>
-                  </label>
-                </div>
-              </fieldset>
-              {formMessage && <div className={`form-alert ${formMessage.type}`}><span>{formMessage.type === "success" ? <Check size={17} /> : <AlertTriangle size={17} />}</span>{formMessage.text}</div>}
-              <button className="admin-primary submit-media" type="submit" disabled={!status?.connected || !file || uploading}>
-                {uploading ? <LoaderCircle className="spin" size={18} /> : <CloudUpload size={18} />}
-                {uploading ? "กำลังบันทึกลง Google..." : "บันทึกและเผยแพร่สื่อ"}
-              </button>
-            </form>
-          </section>
-        )}
       </div>
 
       <section className="trust-section">
@@ -1241,15 +1411,264 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
         </div>
       </footer>
 
+      {showUploadForm && (
+        <div
+          className="admin-modal-backdrop"
+          onMouseDown={() => !uploading && setShowUploadForm(false)}
+        >
+          <section
+            className="admin-upload-modal"
+            id="upload-media-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="upload-media-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="cinematic-modal-header">
+              <div className="cinematic-modal-title">
+                <span className="cinematic-modal-icon">
+                  <CloudUpload size={22} />
+                </span>
+                <div>
+                  <span className="cinematic-modal-kicker">
+                    <Sparkles size={13} /> AI-ASSISTED RISK MEDIA UPLOAD
+                  </span>
+                  <h2 id="upload-media-title">เพิ่มสื่อใหม่</h2>
+                  <p>รองรับ JPG, PNG, WebP และ PDF ไม่เกิน 10 MB • วิเคราะห์ข้อมูลจากภาพด้วย AI อัตโนมัติ</p>
+                </div>
+              </div>
+              <button
+                className="cinematic-modal-close"
+                type="button"
+                onClick={() => setShowUploadForm(false)}
+                disabled={uploading}
+                aria-label="ปิดหน้าต่างเพิ่มสื่อใหม่"
+              >
+                <X size={18} /> ปิดฟอร์ม
+              </button>
+            </header>
+
+            <form onSubmit={handleUpload} className="upload-modal-form">
+              <fieldset disabled={!status?.connected || uploading}>
+                <div
+                  className={file ? "upload-dropzone has-file" : "upload-dropzone"}
+                  onClick={() => fileInput.current?.click()}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    chooseFile(event.dataTransfer.files[0] ?? null);
+                  }}
+                >
+                  <input
+                    ref={fileInput}
+                    type="file"
+                    name="file"
+                    accept=".jpg,.jpeg,.png,.webp,.pdf"
+                    onChange={(event) => chooseFile(event.target.files?.[0] ?? null)}
+                  />
+                  {file ? (
+                    <>
+                      {previewUrl ? (
+                        <img src={previewUrl} alt="ตัวอย่างไฟล์ที่จะอัปโหลด" />
+                      ) : (
+                        <span className="file-type-badge"><FileText size={32} /></span>
+                      )}
+                      <div>
+                        <strong>{file.name}</strong>
+                        <small>{(file.size / 1024 / 1024).toFixed(2)} MB • คลิกเพื่อเปลี่ยนไฟล์</small>
+                      </div>
+                      <div className="dropzone-file-actions">
+                        <button
+                          type="button"
+                          className="ai-reanalyze-btn"
+                          disabled={aiAnalyzing}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void analyzeFileWithAi(file);
+                          }}
+                        >
+                          {aiAnalyzing ? (
+                            <LoaderCircle className="spin" size={15} />
+                          ) : (
+                            <WandSparkles size={15} />
+                          )}
+                          <span>{aiAnalyzing ? "กำลังอ่านภาพ..." : "วิเคราะห์ด้วย AI อีกครั้ง"}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="remove-file-btn"
+                          aria-label="นำไฟล์ออก"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            resetUploadFormFields();
+                          }}
+                        >
+                          <X size={17} />
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <span><Upload size={27} /></span>
+                      <strong>ลากไฟล์รูปภาพมาวาง หรือคลิกเพื่อเลือกไฟล์</strong>
+                      <small>เมื่อแนบรูปภาพ ระบบ AI จะอ่านข้อมูลในภาพเพื่อเติมชื่อสื่อ ช่วงเหตุการณ์ ประเภท คำอธิบาย และคำบรรยายให้อัตโนมัติ</small>
+                    </>
+                  )}
+                </div>
+
+                {aiStatusMessage && (
+                  <div className={`ai-assist-banner ${aiStatusMessage.type}`} role="status">
+                    {aiAnalyzing ? (
+                      <LoaderCircle className="spin" size={18} />
+                    ) : aiStatusMessage.type === "error" ? (
+                      <AlertTriangle size={18} />
+                    ) : (
+                      <Sparkles size={18} />
+                    )}
+                    <span>{aiStatusMessage.text}</span>
+                  </div>
+                )}
+
+                <div className="form-grid">
+                  <label className="field-wide">
+                    ชื่อสื่อ <em>*</em>
+                    <input
+                      name="title"
+                      required
+                      value={uploadTitle}
+                      onChange={(event) => setUploadTitle(event.target.value)}
+                      placeholder="เช่น วิธีเตรียมตัวรับมือน้ำท่วมฉับพลัน"
+                    />
+                  </label>
+                  <label>
+                    ช่วงเหตุการณ์ <em>*</em>
+                    <select
+                      name="phase"
+                      value={uploadPhase}
+                      onChange={(event) => setUploadPhase(event.target.value as IncidentPhase)}
+                    >
+                      <option value="before">ก่อนเกิดเหตุ</option>
+                      <option value="during">ระหว่างเกิดเหตุ</option>
+                      <option value="after">หลังเกิดเหตุ</option>
+                    </select>
+                  </label>
+                  <label>
+                    ประเภทเหตุการณ์ <em>*</em>
+                    <select
+                      name="category"
+                      value={uploadCategory}
+                      onChange={(event) => setUploadCategory(event.target.value)}
+                    >
+                      {categories.map((cat) => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    วันที่เหตุการณ์ <em>*</em>
+                    <input
+                      type="date"
+                      name="eventDate"
+                      required
+                      value={uploadEventDate}
+                      onChange={(event) => setUploadEventDate(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    พื้นที่ <em>*</em>
+                    <input
+                      name="location"
+                      required
+                      value={uploadLocation}
+                      onChange={(event) => setUploadLocation(event.target.value)}
+                    />
+                  </label>
+                  <label className="field-wide">
+                    คำอธิบาย <em>*</em>
+                    <textarea
+                      name="description"
+                      rows={4}
+                      required
+                      value={uploadDescription}
+                      onChange={(event) => setUploadDescription(event.target.value)}
+                      placeholder="สรุปสาระสำคัญและกลุ่มเป้าหมายของสื่อ"
+                    />
+                  </label>
+                  <label className="field-wide">
+                    คำบรรยายภาพเพื่อการเข้าถึง <em>*</em>
+                    <input
+                      name="altText"
+                      required
+                      value={uploadAltText}
+                      onChange={(event) => setUploadAltText(event.target.value)}
+                      placeholder="อธิบายสิ่งที่อยู่ในภาพอย่างกระชับ"
+                    />
+                  </label>
+                  <label className="field-wide">
+                    คำค้นหา <span>(คั่นด้วยเครื่องหมายจุลภาค)</span>
+                    <input
+                      name="keywords"
+                      value={uploadKeywords}
+                      onChange={(event) => setUploadKeywords(event.target.value)}
+                      placeholder="น้ำท่วม, เตรียมพร้อม, ควนโดน"
+                    />
+                  </label>
+                  <label>
+                    สถานะ
+                    <select
+                      name="status"
+                      value={uploadStatus}
+                      onChange={(event) => setUploadStatus(event.target.value as MediaItem["status"])}
+                    >
+                      <option value="published">เผยแพร่ทันที</option>
+                      <option value="draft">บันทึกเป็นฉบับร่าง</option>
+                    </select>
+                  </label>
+                </div>
+              </fieldset>
+
+              {formMessage && (
+                <div className={`form-alert ${formMessage.type}`}>
+                  <span>{formMessage.type === "success" ? <Check size={17} /> : <AlertTriangle size={17} />}</span>
+                  {formMessage.text}
+                </div>
+              )}
+
+              <div className="admin-modal-actions">
+                <button
+                  type="button"
+                  onClick={() => setShowUploadForm(false)}
+                  disabled={uploading}
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  className="admin-primary submit-media"
+                  type="submit"
+                  disabled={!status?.connected || !file || uploading}
+                >
+                  {uploading ? <LoaderCircle className="spin" size={18} /> : <CloudUpload size={18} />}
+                  {uploading ? "กำลังบันทึกลง Google..." : "บันทึกและเผยแพร่สื่อ"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
       {editing && (
         <div className="admin-modal-backdrop" onMouseDown={() => !savingEdit && setEditing(null)}>
           <section className="admin-edit-modal" role="dialog" aria-modal="true" aria-labelledby="edit-media-title" onMouseDown={(event) => event.stopPropagation()}>
-            <header>
-              <div>
-                <span className="panel-icon"><Pencil size={19} /></span>
-                <span><h2 id="edit-media-title">แก้ไขข้อมูลสื่อ</h2><p>ระบบจะเก็บผู้แก้ไข เวลา และรายการข้อมูลที่เปลี่ยน</p></span>
+            <header className="cinematic-modal-header">
+              <div className="cinematic-modal-title">
+                <span className="cinematic-modal-icon"><Pencil size={19} /></span>
+                <div>
+                  <span className="cinematic-modal-kicker"><Sparkles size={13} /> EDIT MEDIA METADATA</span>
+                  <h2 id="edit-media-title">แก้ไขข้อมูลสื่อ</h2>
+                  <p>ระบบจะเก็บผู้แก้ไข เวลา และรายการข้อมูลที่เปลี่ยน</p>
+                </div>
               </div>
-              <button type="button" onClick={() => setEditing(null)} disabled={savingEdit} aria-label="ปิดหน้าต่างแก้ไข"><X size={19} /></button>
+              <button className="cinematic-modal-close" type="button" onClick={() => setEditing(null)} disabled={savingEdit} aria-label="ปิดหน้าต่างแก้ไข"><X size={18} /> ปิด</button>
             </header>
             <form onSubmit={handleEdit}>
               <div className="form-grid">
@@ -1295,12 +1714,16 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       {historyItem && (
         <div className="admin-modal-backdrop" onMouseDown={() => setHistoryItem(null)}>
           <section className="admin-history-modal" role="dialog" aria-modal="true" aria-labelledby="media-history-title" onMouseDown={(event) => event.stopPropagation()}>
-            <header>
-              <div>
-                <span className="panel-icon"><History size={19} /></span>
-                <span><h2 id="media-history-title">ประวัติการแก้ไข</h2><p>{historyItem.title}</p></span>
+            <header className="cinematic-modal-header">
+              <div className="cinematic-modal-title">
+                <span className="cinematic-modal-icon"><History size={19} /></span>
+                <div>
+                  <span className="cinematic-modal-kicker"><Sparkles size={13} /> REVISION HISTORY</span>
+                  <h2 id="media-history-title">ประวัติการแก้ไข</h2>
+                  <p>{historyItem.title}</p>
+                </div>
               </div>
-              <button type="button" onClick={() => setHistoryItem(null)} aria-label="ปิดประวัติ"><X size={19} /></button>
+              <button className="cinematic-modal-close" type="button" onClick={() => setHistoryItem(null)} aria-label="ปิดประวัติ"><X size={18} /> ปิด</button>
             </header>
             <div className="history-list">
               {historyLoading ? (
