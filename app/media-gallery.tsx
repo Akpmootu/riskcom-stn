@@ -32,6 +32,14 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  getItemCategories,
+  optimizeThumbnailUrl,
+  readStoredTagConfigs,
+  resolveTagConfig,
+  writeStoredTagConfigs,
+  type CategoryTagConfig,
+} from "./lib/category-tags";
+import {
   getMediaSlides,
   normalizeMediaItems,
 } from "./lib/media-gallery-utils";
@@ -143,13 +151,16 @@ function MediaArtwork({
   slideUrl?: string;
 }) {
   const visual = getVisualClass(item.category);
-  const effectiveUrl = slideUrl ?? item.thumbnailUrl;
+  const rawUrl = slideUrl ?? item.thumbnailUrl;
+  const effectiveUrl = optimizeThumbnailUrl(rawUrl, large ? 1600 : 640);
   if (effectiveUrl) {
     return (
       <img
         className={large ? "detail-image" : "media-image"}
         src={effectiveUrl}
         alt={item.altText}
+        loading={large ? "eager" : "lazy"}
+        decoding="async"
       />
     );
   }
@@ -367,7 +378,22 @@ export function MediaGallery() {
   const [cacheSavedAt, setCacheSavedAt] = useState<number | null>(null);
   const [showingCachedData, setShowingCachedData] = useState(false);
   const [featuredIndex, setFeaturedIndex] = useState(0);
+  const [tagConfigs, setTagConfigs] = useState<CategoryTagConfig[]>([]);
   const touchStartX = useRef<number | null>(null);
+
+  useEffect(() => {
+    const stored = readStoredTagConfigs();
+    if (stored) setTagConfigs(stored);
+    fetch("/api/admin/categories")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { tagConfigs?: CategoryTagConfig[] } | null) => {
+        if (data?.tagConfigs && Array.isArray(data.tagConfigs) && data.tagConfigs.length > 0) {
+          setTagConfigs(data.tagConfigs);
+          writeStoredTagConfigs(data.tagConfigs);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
 
   const applyMediaResponse = useCallback(
     (result: MediaResponse, cachedAt: number, fromCache: boolean) => {
@@ -533,7 +559,12 @@ export function MediaGallery() {
   }, [selected]);
 
   const categories = useMemo(
-    () => ["ทั้งหมด", ...Array.from(new Set(items.map((item) => item.category)))],
+    () => [
+      "ทั้งหมด",
+      ...Array.from(
+        new Set(items.flatMap((item) => getItemCategories(item))),
+      ),
+    ],
     [items],
   );
 
@@ -541,16 +572,20 @@ export function MediaGallery() {
     const normalized = query.trim().toLocaleLowerCase("th");
     return items.filter((item) => {
       const matchesPhase = phase === "all" || item.phase === phase;
-      const matchesCategory = category === "ทั้งหมด" || item.category === category;
-      const haystack = [
-        item.title,
-        item.description,
-        item.location,
-        item.category,
-        ...item.keywords,
-      ]
-        .join(" ")
-        .toLocaleLowerCase("th");
+      const itemCats = getItemCategories(item);
+      const matchesCategory = category === "ทั้งหมด" || itemCats.includes(category);
+      const haystack =
+        item._searchIndex ||
+        [
+          item.title,
+          item.description,
+          item.location,
+          item.category,
+          ...itemCats,
+          ...item.keywords,
+        ]
+          .join(" ")
+          .toLocaleLowerCase("th");
       return matchesPhase && matchesCategory && (!normalized || haystack.includes(normalized));
     });
   }, [category, items, phase, query]);
@@ -906,18 +941,42 @@ export function MediaGallery() {
 
           <div className="gallery-subbar">
             <div className="filter-chips" aria-label="กรองตามประเภท">
-              {categories.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  className={category === item ? "filter-chip is-active" : "filter-chip"}
-                  onClick={() => setCategory(item)}
-                  aria-pressed={category === item}
-                >
-                  {category === item && <Check size={14} />}
-                  {item}
-                </button>
-              ))}
+              {categories.map((item) => {
+                const isAll = item === "ทั้งหมด";
+                const cfg = !isAll ? resolveTagConfig(item, tagConfigs) : null;
+                const isActive = category === item;
+                return (
+                  <button
+                    key={item}
+                    type="button"
+                    className={isActive ? "filter-chip is-active" : "filter-chip"}
+                    style={
+                      !isAll && cfg
+                        ? isActive
+                          ? {
+                              backgroundColor: cfg.color,
+                              borderColor: cfg.color,
+                              color: "#ffffff",
+                            }
+                          : {
+                              borderColor: cfg.borderColor,
+                              backgroundColor: cfg.bgColor,
+                              color: cfg.textColor,
+                            }
+                        : undefined
+                    }
+                    onClick={() => setCategory(item)}
+                    aria-pressed={isActive}
+                  >
+                    {isActive ? (
+                      <Check size={14} />
+                    ) : cfg ? (
+                      <i className={cfg.icon} aria-hidden="true" />
+                    ) : null}
+                    {item}
+                  </button>
+                );
+              })}
             </div>
 
             <div className="gallery-tool-actions">
@@ -1046,6 +1105,29 @@ export function MediaGallery() {
                       )}
                     </div>
                     <div className="media-body">
+                      <div className="media-card-tags">
+                        {getItemCategories(item).map((catName) => {
+                          const cfg = resolveTagConfig(catName, tagConfigs);
+                          return (
+                            <span
+                              key={catName}
+                              className="event-tag-badge compact"
+                              style={{
+                                color: cfg.textColor,
+                                backgroundColor: cfg.bgColor,
+                                borderColor: cfg.borderColor,
+                              }}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setCategory(catName);
+                              }}
+                            >
+                              <i className={cfg.icon} aria-hidden="true" />
+                              {catName}
+                            </span>
+                          );
+                        })}
+                      </div>
                       <h3
                         onClick={() => {
                           setSelected(item);
@@ -1295,7 +1377,23 @@ export function MediaGallery() {
               <div className="detail-copy">
                 <div className="detail-badges">
                   <span className={`phase-badge badge-${selected.phase}`}>{phaseLabels[selected.phase]}</span>
-                  <span>{selected.category}</span>
+                  {getItemCategories(selected).map((catName) => {
+                    const cfg = resolveTagConfig(catName, tagConfigs);
+                    return (
+                      <span
+                        key={catName}
+                        className="event-tag-badge"
+                        style={{
+                          color: cfg.textColor,
+                          backgroundColor: cfg.bgColor,
+                          borderColor: cfg.borderColor,
+                        }}
+                      >
+                        <i className={cfg.icon} aria-hidden="true" />
+                        {catName}
+                      </span>
+                    );
+                  })}
                   {slides.length > 1 && (
                     <span className="detail-multi-badge">
                       <Images size={13} /> ชุดสื่อ {slides.length} ภาพ

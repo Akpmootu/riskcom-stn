@@ -21,6 +21,7 @@ type AiSuggestion = {
   title: string;
   phase: IncidentPhase;
   category: string;
+  categories: string[];
   description: string;
   altText: string;
   keywords: string[];
@@ -133,7 +134,8 @@ ${extractedText || fileName}
 {
   "title": "ชื่อสื่อที่กระชับ ชัดเจน เป็นทางการ (ไม่เกิน 90 ตัวอักษร)",
   "phase": "เลือกค่าเดียวจาก before หรือ during หรือ after (before = ก่อนเกิดเหตุ/การเตรียมพร้อม/การป้องกัน, during = ระหว่างเกิดเหตุ/การรับมือฉุกเฉิน/แจ้งเตือนภัย, after = หลังเกิดเหตุ/การฟื้นฟูเยียวยา)",
-  "category": "เลือกประเภทเหตุการณ์ที่ตรงที่สุดจากรายการ [${availableCategories.join(", ")}]",
+  "categories": ["เลือกประเภทเหตุการณ์ที่เกี่ยวข้องได้ 1 ถึง 3 รายการจาก [${availableCategories.join(", ")}] เช่น หากเป็นโรคที่มากับน้ำท่วมให้เลือกทั้ง น้ำท่วม และ โรคติดต่อ"],
+  "category": "ประเภทเหตุการณ์หลัก 1 รายการจาก [${availableCategories.join(", ")}]",
   "description": "คำอธิบายสรุปสาระสำคัญ แนวทางปฏิบัติสำหรับประชาชน และกลุ่มเป้าหมายของสื่อ (2-4 ประโยค ภาษาไทยสละสลวย เป็นทางการ)",
   "altText": "คำบรรยายภาพเพื่อการเข้าถึง (Accessibility) อธิบายสิ่งที่อยู่ในภาพและข้อความหลักอย่างกระชับใน 1-2 ประโยค",
   "keywords": ["คำค้นหาที่เกี่ยวข้อง 4-6 คำ"],
@@ -192,12 +194,39 @@ ${extractedText || fileName}
       );
     }
 
+    const rawCategoriesInput = Array.isArray(parsed.categories)
+      ? parsed.categories.map((item) => String(item).trim()).filter(Boolean)
+      : String(parsed.categories || parsed.category || "")
+          .split(/[,|/;]+/)
+          .map((item) => item.trim())
+          .filter(Boolean);
+
+    const matchedCategories: string[] = [];
+    for (const rawCat of rawCategoriesInput) {
+      const match =
+        availableCategories.find((item) => item === rawCat) ||
+        availableCategories.find(
+          (item) => rawCat.includes(item) || item.includes(rawCat),
+        );
+      if (match && !matchedCategories.includes(match)) {
+        matchedCategories.push(match);
+      }
+    }
+
     const rawCategory = String(parsed.category || "").trim();
-    const matchedCategory =
+    const primaryMatch =
       availableCategories.find((item) => item === rawCategory) ||
-      availableCategories.find((item) => rawCategory.includes(item) || item.includes(rawCategory)) ||
-      availableCategories[0] ||
-      "อื่นๆ";
+      availableCategories.find(
+        (item) => rawCategory.includes(item) || item.includes(rawCategory),
+      );
+    if (primaryMatch && !matchedCategories.includes(primaryMatch)) {
+      matchedCategories.unshift(primaryMatch);
+    }
+    if (matchedCategories.length === 0) {
+      matchedCategories.push(availableCategories[0] || "อื่นๆ");
+    }
+
+    const matchedCategory = matchedCategories.join(", ");
 
     const rawKeywords = Array.isArray(parsed.keywords)
       ? parsed.keywords.map((item) => String(item).trim()).filter(Boolean)
@@ -210,6 +239,7 @@ ${extractedText || fileName}
       title: String(parsed.title || "").trim() || fileName.replace(/\.[^.]+$/, ""),
       phase: normalizePhase(parsed.phase),
       category: matchedCategory,
+      categories: matchedCategories,
       description: String(parsed.description || "").trim(),
       altText: String(parsed.altText || "").trim(),
       keywords: rawKeywords,

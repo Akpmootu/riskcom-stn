@@ -1,9 +1,11 @@
+import { formatCategoriesField } from "@/app/lib/category-tags";
 import {
   encodeGalleryKeyword,
   normalizeMediaItem,
   SLIDE_ATTACHMENT_TITLE,
   SLIDE_CHILD_KEYWORD,
 } from "@/app/lib/media-gallery-utils";
+import { upsertIndexedMediaItem } from "@/app/lib/media-index-cache";
 import {
   arrayBufferToBase64,
   json,
@@ -82,7 +84,7 @@ export async function POST(request: Request) {
     const mode = String(form.get("mode") ?? "").trim();
 
     const phase = String(form.get("phase") ?? "before");
-    const category = String(form.get("category") ?? "อื่นๆ").trim();
+    const category = formatCategoriesField(String(form.get("category") ?? "อื่นๆ"));
     const eventDate = String(form.get("eventDate") ?? "");
     const location = String(form.get("location") ?? "จังหวัดสตูล").trim();
 
@@ -207,6 +209,10 @@ export async function POST(request: Request) {
       result.item && typeof result.item === "object"
         ? normalizeMediaItem(result.item as Partial<MediaItem> & { status?: string })
         : null;
+
+    if (normalizedItem) {
+      upsertIndexedMediaItem(normalizedItem);
+    }
 
     return json({
       ...result,

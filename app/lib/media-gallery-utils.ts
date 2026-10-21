@@ -1,3 +1,7 @@
+import {
+  formatCategoriesField,
+  parseCategories,
+} from "@/app/lib/category-tags";
 import type { MediaItem, MediaSlide } from "@/app/types";
 
 export const SLIDE_ATTACHMENT_TITLE = "__SLIDE_ATTACHMENT__";
@@ -169,14 +173,38 @@ export function normalizeMediaItem(
       : extraSlides;
 
   const gallery = [primarySlide, ...existingExtra];
+  const parsedCategories = parseCategories(
+    Array.isArray(raw.categories) && raw.categories.length > 0
+      ? raw.categories
+      : raw.category,
+  );
+  const effectiveCategories =
+    parsedCategories.length > 0 ? parsedCategories : ["อื่นๆ"];
+  const formattedCategory = formatCategoriesField(effectiveCategories);
+  const searchIndex = [
+    title,
+    raw.description,
+    formattedCategory,
+    raw.location,
+    raw.fileName,
+    raw.uploadedBy,
+    ...effectiveCategories,
+    ...visibleKeywords,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLocaleLowerCase("th");
 
   return {
     ...(raw as MediaItem),
     id: String(raw.id),
     title,
+    category: formattedCategory,
+    categories: effectiveCategories,
     status: rawStatus as "published" | "draft",
     keywords: visibleKeywords,
     gallery,
+    _searchIndex: searchIndex,
   };
 }
 

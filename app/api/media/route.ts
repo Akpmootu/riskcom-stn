@@ -1,11 +1,10 @@
-import { normalizeMediaItems } from "@/app/lib/media-gallery-utils";
+import { getIndexedMediaSnapshot } from "@/app/lib/media-index-cache";
 import { getGoogleScriptUrl, json } from "@/app/lib/server";
 import { sampleMedia } from "@/app/sample-data";
-import type { MediaItem } from "@/app/types";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: Request) {
   const url = getGoogleScriptUrl();
   if (!url) {
     return json({
@@ -16,24 +15,20 @@ export async function GET() {
   }
 
   try {
-    const target = new URL(url);
-    target.searchParams.set("action", "list");
-    target.searchParams.set("status", "published");
-    const response = await fetch(target, {
-      headers: { accept: "application/json" },
-      redirect: "follow",
-      cache: "no-store",
-    });
-    if (!response.ok) throw new Error(`Google Apps Script ${response.status}`);
+    const requestUrl = new URL(request.url);
+    const forceRefresh = requestUrl.searchParams.has("refresh");
+    const snapshot = await getIndexedMediaSnapshot({ forceRefresh });
 
-    const result = (await response.json()) as { ok?: boolean; items?: MediaItem[]; error?: string };
-    if (!result.ok || !Array.isArray(result.items)) {
-      throw new Error(result.error || "ไม่พบรายการสื่อ");
-    }
-
-    const activeItems = normalizeMediaItems(result.items, ["published"]);
-
-    return json({ items: activeItems, source: "google" });
+    return json(
+      { items: snapshot.publishedItems, source: "google" },
+      forceRefresh
+        ? { headers: { "cache-control": "no-store" } }
+        : {
+            headers: {
+              "cache-control": "public, s-maxage=45, stale-while-revalidate=300",
+            },
+          },
+    );
   } catch {
     return json({
       items: sampleMedia,

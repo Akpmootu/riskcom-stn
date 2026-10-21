@@ -1,8 +1,12 @@
+import { formatCategoriesField } from "@/app/lib/category-tags";
 import {
   encodeGalleryKeyword,
   normalizeMediaItem,
-  normalizeMediaItems,
 } from "@/app/lib/media-gallery-utils";
+import {
+  getIndexedMediaSnapshot,
+  upsertIndexedMediaItem,
+} from "@/app/lib/media-index-cache";
 import { json, postToGoogle } from "@/app/lib/server";
 import {
   portalErrorResponse,
@@ -12,14 +16,10 @@ import type { MediaItem, MediaSlide } from "@/app/types";
 
 export const dynamic = "force-dynamic";
 
-async function mediaForUser() {
+async function mediaForUser(forceRefresh = false) {
   const { user } = await requireApprovedPortalUser();
-  const result = await postToGoogle({ action: "listAllMedia" });
-  if (!result.ok || !Array.isArray(result.items)) {
-    throw new Error(String(result.error || "ไม่สามารถโหลดรายการสื่อได้"));
-  }
-
-  const items = normalizeMediaItems(result.items, ["published", "draft"]);
+  const snapshot = await getIndexedMediaSnapshot({ forceRefresh });
+  const items = snapshot.allItems;
 
   if (user.role === "uploader") {
     return {
@@ -34,9 +34,11 @@ async function mediaForUser() {
   return { user, items };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const { items } = await mediaForUser();
+    const requestUrl = new URL(request.url);
+    const forceRefresh = requestUrl.searchParams.has("refresh");
+    const { items } = await mediaForUser(forceRefresh);
     return json({ ok: true, items, source: "google" });
   } catch (error) {
     return portalErrorResponse(error);
@@ -76,13 +78,19 @@ export async function PATCH(request: Request) {
       ? [...userKeywords, galleryToken]
       : userKeywords;
 
+    const formattedCategory = formatCategoriesField(
+      Array.isArray(body.categories) && body.categories.length > 0
+        ? body.categories
+        : body.category,
+    );
+
     const result = await postToGoogle({
       action: "updateMedia",
       id: current.id,
       title: String(body.title || "").trim(),
       description: String(body.description || "").trim(),
       phase: body.phase,
-      category: String(body.category || "").trim(),
+      category: formattedCategory,
       eventDate: String(body.eventDate || ""),
       location: String(body.location || "").trim(),
       keywords: finalKeywords,
@@ -98,6 +106,10 @@ export async function PATCH(request: Request) {
       result.item && typeof result.item === "object"
         ? normalizeMediaItem(result.item as Partial<MediaItem> & { status?: string })
         : null;
+
+    if (normalizedItem) {
+      upsertIndexedMediaItem(normalizedItem);
+    }
 
     return json({
       ...result,

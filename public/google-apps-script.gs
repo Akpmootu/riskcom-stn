@@ -207,15 +207,42 @@ function ensureResources_() {
   };
 }
 
-function listMedia_(status) {
+function getFastMediaSheet_() {
+  const properties = PropertiesService.getScriptProperties();
+  const spreadsheetId = properties.getProperty("SATUN_SHEET_ID");
+  if (spreadsheetId) {
+    try {
+      const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+      const sheet = spreadsheet.getSheetByName(SHEET_NAME);
+      if (sheet) return sheet;
+    } catch (_) {}
+  }
   const resources = ensureResources_();
-  const spreadsheet = SpreadsheetApp.openById(resources.spreadsheetId);
-  const sheet = spreadsheet.getSheetByName(SHEET_NAME);
+  return SpreadsheetApp.openById(resources.spreadsheetId).getSheetByName(SHEET_NAME);
+}
+
+function invalidateMediaScriptCache_() {
+  try {
+    const cache = CacheService.getScriptCache();
+    cache.removeAll(["media-list:all", "media-list:published", "media-list:draft"]);
+  } catch (_) {}
+}
+
+function listMedia_(status) {
+  const cacheKey = "media-list:" + (status || "all");
+  try {
+    const cached = CacheService.getScriptCache().get(cacheKey);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+  } catch (_) {}
+
+  const sheet = getFastMediaSheet_();
   const values = sheet.getDataRange().getValues();
   if (values.length < 2) return [];
 
   const headers = values[0].map(String);
-  return values
+  const items = values
     .slice(1)
     .map(function (row) {
       const item = {};
@@ -237,6 +264,15 @@ function listMedia_(status) {
         String(a.updatedAt || a.createdAt || ""),
       );
     });
+
+  try {
+    const serialized = JSON.stringify(items);
+    if (serialized.length < 95000) {
+      CacheService.getScriptCache().put(cacheKey, serialized, 60);
+    }
+  } catch (_) {}
+
+  return items;
 }
 
 function uploadMedia_(payload) {
@@ -288,6 +324,7 @@ function uploadMedia_(payload) {
       return item[header] || "";
     }),
   );
+  invalidateMediaScriptCache_();
   return item;
 }
 
@@ -310,6 +347,7 @@ function deleteMedia_(id) {
         } catch (_) {}
       }
       sheet.getRange(rowIndex + 1, statusColumn + 1).setValue("deleted");
+      invalidateMediaScriptCache_();
       return;
     }
   }
@@ -398,6 +436,7 @@ function updateMedia_(payload) {
       JSON.stringify(before),
       JSON.stringify(after),
     ]);
+    invalidateMediaScriptCache_();
     return normalizeMedia_(item);
   }
   throw new Error("Media not found");

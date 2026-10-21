@@ -1,3 +1,5 @@
+import { getItemCategories } from "@/app/lib/category-tags";
+import { getIndexedMediaSnapshot } from "@/app/lib/media-index-cache";
 import { getGoogleScriptUrl } from "@/app/lib/server";
 import type { IncidentPhase, MediaItem } from "@/app/types";
 
@@ -12,6 +14,7 @@ export type PublicMediaItem = Pick<
   | "description"
   | "phase"
   | "category"
+  | "categories"
   | "eventDate"
   | "location"
   | "keywords"
@@ -107,6 +110,15 @@ export async function fetchPublishedMedia(): Promise<PublicMediaItem[]> {
     );
   }
 
+  try {
+    const snapshot = await getIndexedMediaSnapshot();
+    if (snapshot.publishedItems.length > 0) {
+      return snapshot.publishedItems.map(toPublicMediaItem);
+    }
+  } catch {
+    // Fallback to direct fetch below
+  }
+
   const target = new URL(scriptUrl);
   target.searchParams.set("action", "list");
   target.searchParams.set("status", "published");
@@ -193,8 +205,11 @@ export function filterPublicMedia(
   return items
     .filter((item) => {
       if (query.phase !== "all" && item.phase !== query.phase) return false;
-      if (category && item.category.toLocaleLowerCase("th-TH") !== category) {
-        return false;
+      if (category) {
+        const itemCats = getItemCategories(item).map((c) => c.toLocaleLowerCase("th-TH"));
+        if (!itemCats.includes(category) && item.category.toLocaleLowerCase("th-TH") !== category) {
+          return false;
+        }
       }
       if (query.from && item.eventDate < query.from) return false;
       if (query.to && item.eventDate > query.to) return false;
@@ -226,7 +241,7 @@ export function createMediaEtag(items: PublicMediaItem[], variant = "") {
     (latest, item) => (getUpdatedTime(item) > latest ? getUpdatedTime(item) : latest),
     "",
   );
-  return `W/\"media-${items.length}-${newestUpdate || "empty"}-${checksum(variant)}\"`;
+  return `W/"media-${items.length}-${newestUpdate || "empty"}-${checksum(variant)}"`;
 }
 
 function toPublicMediaItem(item: MediaItem): PublicMediaItem {
@@ -236,6 +251,7 @@ function toPublicMediaItem(item: MediaItem): PublicMediaItem {
     description: item.description,
     phase: item.phase,
     category: item.category,
+    categories: item.categories,
     eventDate: item.eventDate,
     location: item.location,
     keywords: item.keywords,

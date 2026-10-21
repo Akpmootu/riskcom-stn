@@ -1,3 +1,4 @@
+import { removeIndexedMediaIds } from "@/app/lib/media-index-cache";
 import { json, postToGoogle } from "@/app/lib/server";
 import {
   portalErrorResponse,
@@ -15,6 +16,14 @@ export async function POST(request: Request) {
     const body = (await request.json()) as { id?: string; slideIds?: string[] };
     if (!body.id) return json({ ok: false, error: "ไม่พบรหัสสื่อ" }, { status: 400 });
 
+    const extraIds = Array.isArray(body.slideIds)
+      ? body.slideIds
+          .map((entry) => String(entry || "").trim())
+          .filter((entry) => Boolean(entry) && entry !== body.id)
+      : [];
+
+    removeIndexedMediaIds([body.id, ...extraIds]);
+
     const result = await postToGoogle({
       action: "delete",
       id: body.id,
@@ -22,21 +31,16 @@ export async function POST(request: Request) {
     });
     if (!result.ok) throw new Error(String(result.error || "ลบสื่อไม่สำเร็จ"));
 
-    if (Array.isArray(body.slideIds)) {
-      const extraIds = body.slideIds
-        .map((entry) => String(entry || "").trim())
-        .filter((entry) => Boolean(entry) && entry !== body.id);
-      if (extraIds.length > 0) {
-        await Promise.allSettled(
-          extraIds.map((slideId) =>
-            postToGoogle({
-              action: "delete",
-              id: slideId,
-              deletedBy: user.email,
-            }),
-          ),
-        );
-      }
+    if (extraIds.length > 0) {
+      await Promise.allSettled(
+        extraIds.map((slideId) =>
+          postToGoogle({
+            action: "delete",
+            id: slideId,
+            deletedBy: user.email,
+          }),
+        ),
+      );
     }
 
     return json(result);

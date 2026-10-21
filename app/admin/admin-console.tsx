@@ -49,10 +49,27 @@ import { signOut } from "next-auth/react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { isManagerRole, type PortalUser } from "../auth-types";
 import {
+  buildTagConfigFromColor,
+  type CategoryTagConfig,
+  DEFAULT_CATEGORY_CONFIGS,
+  formatCategoriesField,
+  getItemCategories,
+  optimizeThumbnailUrl,
+  parseCategories,
+  readStoredTagConfigs,
+  TAG_COLOR_PRESETS,
+  TAG_ICON_PRESETS,
+  writeStoredTagConfigs,
+} from "../lib/category-tags";
+import {
   getMediaSlides,
   normalizeMediaItems,
 } from "../lib/media-gallery-utils";
-import { clearMediaCache } from "../media-cache";
+import {
+  clearMediaCache,
+  readAdminMediaCache,
+  writeAdminMediaCache,
+} from "../media-cache";
 import type {
   IncidentPhase,
   MediaItem,
@@ -88,6 +105,7 @@ type AiSuggestionResponse = {
     title: string;
     phase: IncidentPhase;
     category: string;
+    categories?: string[];
     description: string;
     altText: string;
     keywords: string[];
@@ -327,7 +345,9 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   } | null>(null);
   const [uploadTitle, setUploadTitle] = useState("");
   const [uploadPhase, setUploadPhase] = useState<IncidentPhase>("before");
-  const [uploadCategory, setUploadCategory] = useState("น้ำท่วม");
+  const [uploadCategories, setUploadCategories] = useState<string[]>(["น้ำท่วม"]);
+  const [inlineNewTag, setInlineNewTag] = useState("");
+  const [inlineNewTagColor, setInlineNewTagColor] = useState(TAG_COLOR_PRESETS[0].color);
   const [uploadEventDate, setUploadEventDate] = useState(todayIsoDate);
   const [uploadLocation, setUploadLocation] = useState("จังหวัดสตูล");
   const [uploadDescription, setUploadDescription] = useState("");
@@ -338,6 +358,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [formMessage, setFormMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState<MediaItem | null>(null);
+  const [editCategories, setEditCategories] = useState<string[]>(["น้ำท่วม"]);
   const [editExtraSlides, setEditExtraSlides] = useState<MediaSlide[]>([]);
   const [editNewFiles, setEditNewFiles] = useState<QueuedUploadFile[]>([]);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -348,9 +369,15 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [visitorStats, setVisitorStats] = useState<VisitorStats | null>(null);
 
-  // System Categories state for Basic Settings management
-  const [systemCategories, setSystemCategories] = useState<string[]>(DEFAULT_CATEGORIES);
+  // System Tag Configs state for Basic Settings management (Supports Color & Font Awesome Icon)
+  const [tagConfigs, setTagConfigs] = useState<CategoryTagConfig[]>(DEFAULT_CATEGORY_CONFIGS);
   const [newCategoryName, setNewCategoryName] = useState("");
+  const [newCategoryColor, setNewCategoryColor] = useState(TAG_COLOR_PRESETS[0].color);
+  const [newCategoryIcon, setNewCategoryIcon] = useState(TAG_ICON_PRESETS[0].icon);
+  const [editingTagTarget, setEditingTagTarget] = useState<string | null>(null);
+  const [editingTagName, setEditingTagName] = useState("");
+  const [editingTagColor, setEditingTagColor] = useState(TAG_COLOR_PRESETS[0].color);
+  const [editingTagIcon, setEditingTagIcon] = useState(TAG_ICON_PRESETS[0].icon);
   const [addingCategory, setAddingCategory] = useState(false);
   const [categoryMessage, setCategoryMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -359,10 +386,25 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    // 1. Instant client-side hydration from indexed localStorage cache
+    const cachedTags = readStoredTagConfigs();
+    if (cachedTags && cachedTags.length > 0) {
+      setTagConfigs(cachedTags);
+    }
+
+    const cachedAdminMedia = readAdminMediaCache();
+    if (cachedAdminMedia && cachedAdminMedia.items.length > 0) {
+      setItems(cachedAdminMedia.items);
+      setSource(cachedAdminMedia.source);
+      setItemsLoading(false);
+      setHydrating(false);
+    }
+
+    // 2. Background verification & fresh index sync
     void Promise.allSettled([
+      loadItems({ silent: Boolean(cachedAdminMedia && cachedAdminMedia.items.length > 0) }),
       checkConnection(),
-      loadItems(),
-      loadCategories(),
+      loadCategories(cachedTags),
       loadVisitorStats(),
     ]).finally(() => {
       setHydrating(false);
@@ -386,13 +428,38 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     }
   }
 
-  async function loadCategories() {
+  async function loadCategories(localStored?: CategoryTagConfig[] | null) {
     try {
+      if (localStored && localStored.length > 0) {
+        const syncRes = await fetch("/api/admin/categories", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: "sync", tagConfigs: localStored }),
+        });
+        if (syncRes.ok) {
+          const syncResult = (await syncRes.json()) as {
+            tagConfigs?: CategoryTagConfig[];
+          };
+          if (Array.isArray(syncResult.tagConfigs) && syncResult.tagConfigs.length > 0) {
+            setTagConfigs(syncResult.tagConfigs);
+            writeStoredTagConfigs(syncResult.tagConfigs);
+            return;
+          }
+        }
+      }
       const response = await fetch("/api/admin/categories");
       if (response.ok) {
-        const result = (await response.json()) as { categories?: string[] };
-        if (Array.isArray(result.categories)) {
-          setSystemCategories(result.categories);
+        const result = (await response.json()) as {
+          categories?: string[];
+          tagConfigs?: CategoryTagConfig[];
+        };
+        if (Array.isArray(result.tagConfigs) && result.tagConfigs.length > 0) {
+          setTagConfigs(result.tagConfigs);
+          writeStoredTagConfigs(result.tagConfigs);
+        } else if (Array.isArray(result.categories) && result.categories.length > 0) {
+          const mapped = result.categories.map((name) => buildTagConfigFromColor(name));
+          setTagConfigs(mapped);
+          writeStoredTagConfigs(mapped);
         }
       }
     } catch {
@@ -402,23 +469,38 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
 
   async function handleAddCategory(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const name = newCategoryName.trim();
-    if (!name) return;
+    const rawName = newCategoryName.trim();
+    if (!rawName) return;
     setAddingCategory(true);
     setCategoryMessage(null);
     try {
       const response = await fetch("/api/admin/categories", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({
+          action: "add",
+          name: rawName,
+          color: newCategoryColor,
+          icon: newCategoryIcon,
+        }),
       });
-      const result = (await response.json()) as { ok?: boolean; categories?: string[]; error?: string };
-      if (!response.ok || !result.ok || !Array.isArray(result.categories)) {
+      const result = (await response.json()) as {
+        ok?: boolean;
+        tagConfigs?: CategoryTagConfig[];
+        error?: string;
+      };
+      if (!response.ok || !result.ok || !Array.isArray(result.tagConfigs)) {
         throw new Error(result.error || "เพิ่มประเภทเหตุการณ์ไม่สำเร็จ");
       }
-      setSystemCategories(result.categories);
+      setTagConfigs(result.tagConfigs);
+      writeStoredTagConfigs(result.tagConfigs);
       setNewCategoryName("");
-      setCategoryMessage({ type: "success", text: `เพิ่มประเภท “${name}” สำเร็จ` });
+      const nextPaletteIdx = result.tagConfigs.length % TAG_COLOR_PRESETS.length;
+      setNewCategoryColor(TAG_COLOR_PRESETS[nextPaletteIdx].color);
+      setCategoryMessage({
+        type: "success",
+        text: `เพิ่ม Tag “${rawName}” พร้อมกำหนดสีและไอคอนสำเร็จ`,
+      });
     } catch (error) {
       setCategoryMessage({
         type: "error",
@@ -429,23 +511,74 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     }
   }
 
+  async function handleUpdateTagConfig(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingTagTarget || !editingTagName.trim()) return;
+    setCategoryMessage(null);
+    try {
+      const response = await fetch("/api/admin/categories", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "update",
+          oldName: editingTagTarget,
+          name: editingTagName.trim(),
+          color: editingTagColor,
+          icon: editingTagIcon,
+        }),
+      });
+      const result = (await response.json()) as {
+        ok?: boolean;
+        tagConfigs?: CategoryTagConfig[];
+        error?: string;
+      };
+      if (!response.ok || !result.ok || !Array.isArray(result.tagConfigs)) {
+        throw new Error(result.error || "อัปเดต Tag ไม่สำเร็จ");
+      }
+      setTagConfigs(result.tagConfigs);
+      writeStoredTagConfigs(result.tagConfigs);
+      setEditingTagTarget(null);
+      setCategoryMessage({
+        type: "success",
+        text: `บันทึกการตั้งค่าสีและไอคอนของ Tag “${editingTagName.trim()}” เรียบร้อยแล้ว`,
+      });
+    } catch (error) {
+      setCategoryMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "อัปเดต Tag ไม่สำเร็จ",
+      });
+    }
+  }
+
   async function handleDeleteCategory(categoryName: string) {
-    if (DEFAULT_CATEGORIES.includes(categoryName)) {
-      alert("ไม่สามารถลบประเภทเหตุการณ์มาตรฐานของระบบได้");
+    if (tagConfigs.length <= 1) {
+      alert("ต้องมีประเภทเหตุการณ์อย่างน้อย 1 รายการในระบบ");
       return;
     }
-    if (!window.confirm(`ต้องการลบประเภทเหตุการณ์ “${categoryName}” หรือไม่`)) return;
+    if (!window.confirm(`ต้องการลบ Tag ประเภทเหตุการณ์ “${categoryName}” ออกจากตัวเลือกระบบหรือไม่?`)) return;
+    setCategoryMessage(null);
     try {
       const response = await fetch(
         `/api/admin/categories?name=${encodeURIComponent(categoryName)}`,
         { method: "DELETE" },
       );
-      const result = (await response.json()) as { ok?: boolean; categories?: string[]; error?: string };
-      if (!response.ok || !result.ok || !Array.isArray(result.categories)) {
+      const result = (await response.json()) as {
+        ok?: boolean;
+        tagConfigs?: CategoryTagConfig[];
+        error?: string;
+      };
+      if (!response.ok || !result.ok || !Array.isArray(result.tagConfigs)) {
         throw new Error(result.error || "ลบประเภทเหตุการณ์ไม่สำเร็จ");
       }
-      setSystemCategories(result.categories);
-      setCategoryMessage({ type: "success", text: `ลบประเภท “${categoryName}” สำเร็จ` });
+      setTagConfigs(result.tagConfigs);
+      writeStoredTagConfigs(result.tagConfigs);
+      if (editingTagTarget === categoryName) {
+        setEditingTagTarget(null);
+      }
+      setCategoryMessage({
+        type: "success",
+        text: `ลบ Tag “${categoryName}” เรียบร้อยแล้ว`,
+      });
     } catch (error) {
       setCategoryMessage({
         type: "error",
@@ -454,12 +587,101 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     }
   }
 
+  async function handleResetDefaultTags() {
+    if (!window.confirm("ต้องการคืนค่า Tag มาตรฐานเริ่มต้นของระบบทั้งหมดหรือไม่?")) return;
+    setCategoryMessage(null);
+    try {
+      const response = await fetch("/api/admin/categories", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "reset" }),
+      });
+      const result = (await response.json()) as {
+        ok?: boolean;
+        tagConfigs?: CategoryTagConfig[];
+      };
+      if (response.ok && result.ok && Array.isArray(result.tagConfigs)) {
+        setTagConfigs(result.tagConfigs);
+        writeStoredTagConfigs(result.tagConfigs);
+        setEditingTagTarget(null);
+        setCategoryMessage({
+          type: "success",
+          text: "คืนค่า Tag มาตรฐานเริ่มต้นของระบบเรียบร้อยแล้ว",
+        });
+      }
+    } catch {
+      // Ignore error
+    }
+  }
+
+  async function handleQuickAddInlineTag(targetMode: "upload" | "edit") {
+    const raw = inlineNewTag.trim();
+    if (!raw) return;
+    const parsedNames = parseCategories(raw);
+    if (parsedNames.length === 0) return;
+
+    const updatedConfigs = [...tagConfigs];
+    for (let idx = 0; idx < parsedNames.length; idx += 1) {
+      const tagName = parsedNames[idx];
+      if (!updatedConfigs.some((item) => item.name === tagName)) {
+        updatedConfigs.push(
+          buildTagConfigFromColor(
+            tagName,
+            idx === 0 ? inlineNewTagColor : undefined,
+          ),
+        );
+      }
+    }
+
+    setTagConfigs(updatedConfigs);
+    writeStoredTagConfigs(updatedConfigs);
+    setInlineNewTag("");
+    const nextColorIdx = updatedConfigs.length % TAG_COLOR_PRESETS.length;
+    setInlineNewTagColor(TAG_COLOR_PRESETS[nextColorIdx].color);
+
+    if (targetMode === "upload") {
+      setUploadCategories((prev) => Array.from(new Set([...prev, ...parsedNames])));
+    } else {
+      setEditCategories((prev) => Array.from(new Set([...prev, ...parsedNames])));
+    }
+
+    void fetch("/api/admin/categories", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "sync", tagConfigs: updatedConfigs }),
+    }).catch(() => undefined);
+  }
+
+  function toggleCategoryTag(
+    tagName: string,
+    selectedList: string[],
+    setter: (next: string[]) => void,
+  ) {
+    if (selectedList.includes(tagName)) {
+      if (selectedList.length <= 1) return; // Keep at least 1 selected tag
+      setter(selectedList.filter((entry) => entry !== tagName));
+    } else {
+      setter([...selectedList, tagName]);
+    }
+  }
+
+  const tagConfigMap = useMemo(() => {
+    const map = new Map<string, CategoryTagConfig>();
+    for (const cfg of tagConfigs) {
+      map.set(cfg.name, cfg);
+    }
+    return map;
+  }, [tagConfigs]);
+
+  function getTagVisual(tagName: string): CategoryTagConfig {
+    return tagConfigMap.get(tagName) ?? buildTagConfigFromColor(tagName);
+  }
+
   const categories = useMemo(() => {
-    const itemCats = items.map((item) => item.category).filter(Boolean);
-    return Array.from(new Set([...systemCategories, ...itemCats])).sort((left, right) =>
-      left.localeCompare(right, "th"),
-    );
-  }, [items, systemCategories]);
+    const configuredNames = tagConfigs.map((item) => item.name);
+    const itemCats = items.flatMap((item) => getItemCategories(item)).filter(Boolean);
+    return Array.from(new Set([...configuredNames, ...itemCats]));
+  }, [items, tagConfigs]);
 
   const monthOptions = useMemo(
     () =>
@@ -476,8 +698,9 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const filteredItems = useMemo(() => {
     const needle = mediaQuery.trim().toLocaleLowerCase("th");
     const filtered = items.filter((item) => {
-      const matchesQuery =
-        !needle ||
+      const itemCats = getItemCategories(item);
+      const haystack =
+        item._searchIndex ||
         [
           item.title,
           item.description,
@@ -485,15 +708,19 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
           item.location,
           item.fileName,
           item.uploadedBy,
+          ...itemCats,
           ...item.keywords,
         ]
           .filter(Boolean)
           .join(" ")
-          .toLocaleLowerCase("th")
-          .includes(needle);
+          .toLocaleLowerCase("th");
+      const matchesQuery = !needle || haystack.includes(needle);
       const matchesStatus = mediaStatus === "all" || item.status === mediaStatus;
       const matchesPhase = mediaPhase === "all" || item.phase === mediaPhase;
-      const matchesCategory = mediaCategory === "all" || item.category === mediaCategory;
+      const matchesCategory =
+        mediaCategory === "all" ||
+        itemCats.includes(mediaCategory) ||
+        item.category === mediaCategory;
       const matchesMonth =
         mediaMonth === "all" ||
         monthKey(item.eventDate) === mediaMonth ||
@@ -544,11 +771,16 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     thisMonth: items.filter((item) => monthKey(item.createdAt) === currentMonth).length,
   };
 
-  async function loadItems() {
-    setItemsLoading(true);
+  async function loadItems(options?: { silent?: boolean; forceRefresh?: boolean }) {
+    if (!options?.silent) {
+      setItemsLoading(true);
+    }
     setItemsLoadError("");
     try {
-      const response = await fetch(`/api/admin/media?t=${Date.now()}`, { cache: "no-store" });
+      const endpoint = options?.forceRefresh
+        ? `/api/admin/media?refresh=${Date.now()}`
+        : "/api/admin/media";
+      const response = await fetch(endpoint, { cache: "no-store" });
       const result = (await response.json()) as MediaResponse & {
         error?: string;
       };
@@ -572,10 +804,13 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       );
       setItems(activeItems);
       setSource(result.source);
+      writeAdminMediaCache(activeItems, result.source);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "โหลดรายการสื่อไม่สำเร็จ";
-      setItemsLoadError(message);
+      if (!options?.silent) {
+        setItemsLoadError(message);
+      }
       throw error;
     } finally {
       setItemsLoading(false);
@@ -616,7 +851,8 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     setAiStatusMessage(null);
     setUploadTitle("");
     setUploadPhase("before");
-    setUploadCategory(categories[0] || "น้ำท่วม");
+    setUploadCategories([categories[0] || "น้ำท่วม"]);
+    setInlineNewTag("");
     setUploadEventDate(todayIsoDate());
     setUploadLocation("จังหวัดสตูล");
     setUploadDescription("");
@@ -630,7 +866,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     setAiAnalyzing(true);
     setAiStatusMessage({
       type: "info",
-      text: "AI กำลังอ่านข้อความและวิเคราะห์รูปภาพเพื่อสร้างข้อมูลอัตโนมัติ...",
+      text: "AI กำลังอ่านข้อความและวิเคราะห์รูปภาพเพื่อสร้างข้อมูลและเลือก Tag อัตโนมัติ...",
     });
 
     try {
@@ -657,7 +893,12 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       const { suggestion } = result;
       if (suggestion.title) setUploadTitle(suggestion.title);
       if (suggestion.phase) setUploadPhase(suggestion.phase);
-      if (suggestion.category) setUploadCategory(suggestion.category);
+      if (Array.isArray(suggestion.categories) && suggestion.categories.length > 0) {
+        setUploadCategories(suggestion.categories);
+      } else if (suggestion.category) {
+        const parsedCats = parseCategories(suggestion.category);
+        if (parsedCats.length > 0) setUploadCategories(parsedCats);
+      }
       if (suggestion.description) setUploadDescription(suggestion.description);
       if (suggestion.altText) setUploadAltText(suggestion.altText);
       if (Array.isArray(suggestion.keywords) && suggestion.keywords.length > 0) {
@@ -668,7 +909,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
 
       setAiStatusMessage({
         type: "success",
-        text: "AI วิเคราะห์ภาพและเติมชื่อสื่อ ช่วงเหตุการณ์ ประเภท คำอธิบาย และคำบรรยายให้เรียบร้อยแล้ว (แก้ไขเพิ่มเติมได้ตามต้องการ)",
+        text: "AI วิเคราะห์ภาพและเติมชื่อสื่อ ช่วงเหตุการณ์ ประเภท Tag คำอธิบาย และคำบรรยายให้เรียบร้อยแล้ว (เลือกเพิ่มหรือแก้ไขได้ตามต้องการ)",
       });
     } catch (error) {
       setAiStatusMessage({
@@ -766,6 +1007,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     event.preventDefault();
     if (uploadFiles.length === 0 || !status?.connected) return;
 
+    const combinedCategory = formatCategoriesField(uploadCategories);
     setUploading(true);
     setFormMessage(null);
     const totalCount = uploadFiles.length;
@@ -776,7 +1018,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
           setUploadProgressText(`กำลังปรับแต่งและอัปโหลดรูปภาพที่ ${idx + 1} จาก ${totalCount}...`);
           const slide = await uploadSingleAttachment(uploadFiles[idx].file, {
             phase: uploadPhase,
-            category: uploadCategory,
+            category: combinedCategory,
             eventDate: uploadEventDate,
             location: uploadLocation.trim(),
           });
@@ -798,7 +1040,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       }
       data.set("title", uploadTitle.trim());
       data.set("phase", uploadPhase);
-      data.set("category", uploadCategory);
+      data.set("category", combinedCategory);
       data.set("eventDate", uploadEventDate);
       data.set("location", uploadLocation.trim());
       data.set("description", uploadDescription.trim());
@@ -810,7 +1052,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
         method: "POST",
         body: data,
       });
-      const result = (await response.json()) as { ok?: boolean; error?: string };
+      const result = (await response.json()) as { ok?: boolean; item?: MediaItem; error?: string };
       if (!response.ok || !result.ok) throw new Error(result.error || "บันทึกสื่อไม่สำเร็จ");
       resetUploadFormFields();
       setShowUploadForm(false);
@@ -822,7 +1064,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
             ? `บันทึกชุดสื่อจำนวน ${totalCount} รูปภาพใน Google Drive และ Google Sheets เรียบร้อยแล้ว`
             : "บันทึกไฟล์ใน Google Drive และเพิ่มข้อมูลใน Google Sheets เรียบร้อยแล้ว",
       });
-      await loadItems();
+      await loadItems({ forceRefresh: false });
       setMediaSort("created-desc");
       setMediaPage(1);
     } catch (error) {
@@ -862,7 +1104,11 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
         // Ignore session storage errors
       }
       clearMediaCache();
-      setItems((current) => current.filter((entry) => entry.id !== item.id));
+      setItems((current) => {
+        const next = current.filter((entry) => entry.id !== item.id);
+        writeAdminMediaCache(next, source);
+        return next;
+      });
       setFormMessage({
         type: "success",
         text: `ลบสื่อ “${item.title}” ออกจากคลังสื่อเรียบร้อยแล้ว`,
@@ -878,6 +1124,8 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   function openEditModal(item: MediaItem) {
     const slides = getMediaSlides(item);
     setEditExtraSlides(slides.slice(1));
+    setEditCategories(getItemCategories(item));
+    setInlineNewTag("");
     for (const oldFile of editNewFiles) {
       if (oldFile.previewUrl) URL.revokeObjectURL(oldFile.previewUrl);
     }
@@ -920,7 +1168,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     setFormMessage(null);
     try {
       const phaseValue = String(data.get("phase") || "before");
-      const categoryValue = String(data.get("category") || "");
+      const categoryValue = formatCategoriesField(editCategories);
       const eventDateValue = String(data.get("eventDate") || "");
       const locationValue = String(data.get("location") || "");
 
@@ -946,6 +1194,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
           description: String(data.get("description") || ""),
           phase: phaseValue,
           category: categoryValue,
+          categories: editCategories,
           eventDate: eventDateValue,
           location: locationValue,
           keywords: String(data.get("keywords") || "")
@@ -965,11 +1214,13 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       if (!response.ok || !result.ok || !result.item) {
         throw new Error(result.error || "แก้ไขข้อมูลสื่อไม่สำเร็จ");
       }
-      setItems((current) =>
-        current.map((item) =>
+      setItems((current) => {
+        const next = current.map((item) =>
           item.id === result.item?.id ? result.item : item,
-        ),
-      );
+        );
+        writeAdminMediaCache(next, source);
+        return next;
+      });
       clearMediaCache();
       closeEditModal();
       setFormMessage({
@@ -1037,12 +1288,13 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   }
 
   function openUploadModal() {
-    if (!uploadCategory && categories[0]) {
-      setUploadCategory(categories[0]);
+    if (uploadCategories.length === 0 && categories[0]) {
+      setUploadCategories([categories[0]]);
     }
     if (!uploadEventDate) {
       setUploadEventDate(todayIsoDate());
     }
+    setInlineNewTag("");
     setFormMessage(null);
     setShowUploadForm(true);
   }
@@ -1291,7 +1543,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
               </div>
               <div className="library-heading-actions">
                 {source === "demo" && <span className="demo-label">ข้อมูลตัวอย่าง</span>}
-                <button type="button" onClick={() => void loadItems()} disabled={itemsLoading}>
+                <button type="button" onClick={() => void loadItems({ forceRefresh: true })} disabled={itemsLoading}>
                   <RefreshCw className={itemsLoading ? "spin" : ""} size={16} /> โหลดข้อมูลใหม่
                 </button>
               </div>
@@ -1399,6 +1651,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
               <div className="media-library-list">
                 {visibleMediaItems.map((item) => {
                   const itemSlides = getMediaSlides(item);
+                  const itemCategories = getItemCategories(item);
                   return (
                     <article className="media-library-item" key={item.id}>
                       <div
@@ -1419,7 +1672,13 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                         }}
                       >
                         {item.thumbnailUrl ? (
-                          <img src={item.thumbnailUrl} alt="" aria-hidden="true" />
+                          <img
+                            src={optimizeThumbnailUrl(item.thumbnailUrl, 480)}
+                            alt=""
+                            aria-hidden="true"
+                            loading="lazy"
+                            decoding="async"
+                          />
                         ) : item.fileType.includes("pdf") ? (
                           <FileText size={24} />
                         ) : (
@@ -1446,7 +1705,32 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                             </span>
                           )}
                         </div>
-                        <p>{item.category} • {phaseLabels[item.phase]} • {item.location}</p>
+                        <div className="library-item-tags-row">
+                          {itemCategories.map((cat) => {
+                            const cfg = getTagVisual(cat);
+                            return (
+                              <span
+                                key={`${item.id}-${cat}`}
+                                className="event-tag-badge"
+                                style={{
+                                  backgroundColor: cfg.bgColor,
+                                  color: cfg.textColor,
+                                  borderColor: cfg.borderColor,
+                                }}
+                              >
+                                <span
+                                  className="event-tag-dot"
+                                  style={{ backgroundColor: cfg.color }}
+                                />
+                                <i className={cfg.icon} aria-hidden="true" />
+                                <span>{cat}</span>
+                              </span>
+                            );
+                          })}
+                          <span className="library-phase-location">
+                            • {phaseLabels[item.phase]} • {item.location}
+                          </span>
+                        </div>
                         <div className="library-item-meta">
                           <span><CalendarDays size={13} /> เหตุการณ์ {formatThaiDate(item.eventDate)}</span>
                           {item.uploadedBy && <span><UserRound size={13} /> โดย {item.uploadedBy}</span>}
@@ -1556,8 +1840,11 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
               <div className="panel-heading-main">
                 <span className="panel-icon"><ShieldCheck size={22} /></span>
                 <span>
-                  <h2>จัดการข้อมูลพื้นฐานและการตั้งค่าระบบ</h2>
-                  <p>กำหนดประเภทเหตุการณ์ ข้อมูลระบบ และตรวจสอบสถานะระบบก่อนใช้งาน</p>
+                  <h2>
+                    <i className="fa-solid fa-sliders" style={{ marginRight: 8, color: "#0284c7" }} aria-hidden="true" />
+                    จัดการข้อมูลพื้นฐานและการตั้งค่าระบบ
+                  </h2>
+                  <p>กำหนดประเภทเหตุการณ์ (Tag) สีประจำหมวดหมู่ ไอคอน และตรวจสอบระบบ Index ฐานข้อมูล</p>
                 </span>
               </div>
             </div>
@@ -1565,24 +1852,121 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
             <div className="basic-settings-grid">
               <article className="settings-card">
                 <div className="settings-card-head">
-                  <span className="card-icon"><Plus size={20} /></span>
-                  <div>
-                    <h3>จัดการประเภทเหตุการณ์</h3>
-                    <p>เพิ่มประเภทเหตุการณ์ใหม่เพื่อนำไปใช้ในฟอร์มสื่อและตัวกรอง</p>
+                  <span className="card-icon">
+                    <i className="fa-solid fa-tags" aria-hidden="true" />
+                  </span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                      <h3>จัดการประเภทเหตุการณ์และสี Tag</h3>
+                      <button
+                        type="button"
+                        className="tag-reset-default-btn"
+                        onClick={() => void handleResetDefaultTags()}
+                        title="คืนค่า Tag มาตรฐานเริ่มต้น"
+                      >
+                        <i className="fa-solid fa-rotate-left" aria-hidden="true" /> คืนค่ามาตรฐาน
+                      </button>
+                    </div>
+                    <p>เพิ่ม ลบ เปลี่ยนสี และตั้งค่าไอคอน Tag สำหรับเลือกหลายเหตุการณ์ในฟอร์มสื่อ</p>
                   </div>
                 </div>
 
-                <form onSubmit={handleAddCategory} className="add-category-form">
-                  <input
-                    value={newCategoryName}
-                    onChange={(event) => setNewCategoryName(event.target.value)}
-                    placeholder="เช่น วาตภัย, ดินโคลนถล่ม, ภัยแล้ง"
-                    disabled={addingCategory}
-                  />
-                  <button type="submit" disabled={addingCategory || !newCategoryName.trim()}>
-                    {addingCategory ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}
-                    เพิ่มประเภท
-                  </button>
+                <form onSubmit={handleAddCategory} className="tag-creator-box">
+                  <div className="add-category-form">
+                    <input
+                      value={newCategoryName}
+                      onChange={(event) => setNewCategoryName(event.target.value)}
+                      placeholder="เช่น วาตภัย, ดินโคลนถล่ม, ภัยแล้ง (คั่นด้วย , เพื่อแยกหลาย Tag ได้)"
+                      disabled={addingCategory}
+                    />
+                    <button type="submit" disabled={addingCategory || !newCategoryName.trim()}>
+                      {addingCategory ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}
+                      เพิ่ม Tag
+                    </button>
+                  </div>
+
+                  <div className="tag-customizer-row">
+                    <div className="tag-color-picker-group">
+                      <span className="tag-customizer-label">
+                        <i className="fa-solid fa-palette" aria-hidden="true" /> เลือกสี Tag:
+                      </span>
+                      <div className="tag-color-swatches">
+                        {TAG_COLOR_PRESETS.map((preset) => (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            className={
+                              newCategoryColor.toLowerCase() === preset.color.toLowerCase()
+                                ? "color-swatch-btn is-selected"
+                                : "color-swatch-btn"
+                            }
+                            style={{ backgroundColor: preset.color }}
+                            title={preset.label}
+                            onClick={() => setNewCategoryColor(preset.color)}
+                          />
+                        ))}
+                        <label className="custom-color-wheel" title="เลือกสีแบบกำหนดเอง">
+                          <input
+                            type="color"
+                            value={newCategoryColor}
+                            onChange={(event) => setNewCategoryColor(event.target.value)}
+                          />
+                          <i className="fa-solid fa-eye-dropper" aria-hidden="true" />
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="tag-icon-picker-group">
+                      <span className="tag-customizer-label">
+                        <i className="fa-solid fa-icons" aria-hidden="true" /> ไอคอน:
+                      </span>
+                      <div className="tag-icon-swatches">
+                        {TAG_ICON_PRESETS.map((preset) => (
+                          <button
+                            key={preset.icon}
+                            type="button"
+                            className={
+                              newCategoryIcon === preset.icon
+                                ? "icon-swatch-btn is-selected"
+                                : "icon-swatch-btn"
+                            }
+                            title={preset.label}
+                            onClick={() => setNewCategoryIcon(preset.icon)}
+                          >
+                            <i className={preset.icon} aria-hidden="true" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {newCategoryName.trim() && (
+                      <div className="tag-live-preview-row">
+                        <small>ตัวอย่าง Tag ที่จะได้:</small>
+                        {parseCategories(newCategoryName).map((previewName, idx) => {
+                          const cfg = buildTagConfigFromColor(
+                            previewName,
+                            idx === 0 ? newCategoryColor : undefined,
+                            idx === 0 ? newCategoryIcon : undefined,
+                          );
+                          return (
+                            <span
+                              key={previewName}
+                              className="event-tag-badge"
+                              style={{
+                                backgroundColor: cfg.bgColor,
+                                color: cfg.textColor,
+                                borderColor: cfg.borderColor,
+                              }}
+                            >
+                              <span className="event-tag-dot" style={{ backgroundColor: cfg.color }} />
+                              <i className={cfg.icon} aria-hidden="true" />
+                              <span>{previewName}</span>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </form>
 
                 {categoryMessage && (
@@ -1592,24 +1976,119 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                   </div>
                 )}
 
+                {editingTagTarget && (
+                  <form onSubmit={handleUpdateTagConfig} className="tag-edit-inline-card">
+                    <div className="tag-edit-inline-head">
+                      <strong>
+                        <i className="fa-solid fa-pen-to-square" aria-hidden="true" /> แก้ไข Tag “{editingTagTarget}”
+                      </strong>
+                      <button
+                        type="button"
+                        className="tag-edit-cancel"
+                        onClick={() => setEditingTagTarget(null)}
+                      >
+                        <X size={14} /> ปิด
+                      </button>
+                    </div>
+                    <div className="tag-edit-inline-controls">
+                      <input
+                        value={editingTagName}
+                        onChange={(event) => setEditingTagName(event.target.value)}
+                        placeholder="ชื่อ Tag"
+                        required
+                      />
+                      <div className="tag-color-swatches">
+                        {TAG_COLOR_PRESETS.map((preset) => (
+                          <button
+                            key={`edit-${preset.id}`}
+                            type="button"
+                            className={
+                              editingTagColor.toLowerCase() === preset.color.toLowerCase()
+                                ? "color-swatch-btn is-selected"
+                                : "color-swatch-btn"
+                            }
+                            style={{ backgroundColor: preset.color }}
+                            title={preset.label}
+                            onClick={() => setEditingTagColor(preset.color)}
+                          />
+                        ))}
+                        <label className="custom-color-wheel" title="กำหนดสีเอง">
+                          <input
+                            type="color"
+                            value={editingTagColor}
+                            onChange={(event) => setEditingTagColor(event.target.value)}
+                          />
+                          <i className="fa-solid fa-eye-dropper" aria-hidden="true" />
+                        </label>
+                      </div>
+                      <div className="tag-icon-swatches">
+                        {TAG_ICON_PRESETS.map((preset) => (
+                          <button
+                            key={`edit-icon-${preset.icon}`}
+                            type="button"
+                            className={
+                              editingTagIcon === preset.icon
+                                ? "icon-swatch-btn is-selected"
+                                : "icon-swatch-btn"
+                            }
+                            title={preset.label}
+                            onClick={() => setEditingTagIcon(preset.icon)}
+                          >
+                            <i className={preset.icon} aria-hidden="true" />
+                          </button>
+                        ))}
+                      </div>
+                      <button type="submit" className="tag-edit-save-btn">
+                        <Check size={15} /> บันทึกการตั้งค่า Tag
+                      </button>
+                    </div>
+                  </form>
+                )}
+
                 <div className="category-tags-list">
                   {categories.map((cat) => {
-                    const isDefault = DEFAULT_CATEGORIES.includes(cat);
-                    const count = items.filter((item) => item.category === cat).length;
+                    const cfg = getTagVisual(cat);
+                    const count = items.filter((item) =>
+                      getItemCategories(item).includes(cat),
+                    ).length;
                     return (
-                      <span key={cat} className={isDefault ? "category-tag-chip is-default" : "category-tag-chip"}>
+                      <span
+                        key={cat}
+                        className="category-tag-chip is-colored"
+                        style={{
+                          backgroundColor: cfg.bgColor,
+                          color: cfg.textColor,
+                          borderColor: cfg.borderColor,
+                        }}
+                      >
+                        <span
+                          className="event-tag-dot"
+                          style={{ backgroundColor: cfg.color }}
+                        />
+                        <i className={cfg.icon} aria-hidden="true" />
                         <span>{cat}</span>
-                        <small style={{ opacity: 0.75, fontSize: "12px" }}>({count})</small>
-                        {!isDefault && (
-                          <button
-                            type="button"
-                            className="chip-remove-btn"
-                            onClick={() => void handleDeleteCategory(cat)}
-                            title={`ลบ ${cat}`}
-                          >
-                            <X size={14} />
-                          </button>
-                        )}
+                        <small style={{ opacity: 0.82, fontSize: "12px" }}>({count})</small>
+                        <button
+                          type="button"
+                          className="chip-edit-btn"
+                          onClick={() => {
+                            setEditingTagTarget(cat);
+                            setEditingTagName(cat);
+                            setEditingTagColor(cfg.color);
+                            setEditingTagIcon(cfg.icon);
+                          }}
+                          title={`เปลี่ยนสี / แก้ไข ${cat}`}
+                        >
+                          <i className="fa-solid fa-palette" aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          className="chip-remove-btn"
+                          onClick={() => void handleDeleteCategory(cat)}
+                          title={`ลบ Tag ${cat}`}
+                        >
+                          <X size={13} />
+                        </button>
                       </span>
                     );
                   })}
@@ -1620,14 +2099,37 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                 <div className="settings-card-head">
                   <span className="card-icon"><FolderCheck size={20} /></span>
                   <div>
-                    <h3>สถานะระบบและ Google Integration</h3>
-                    <p>พื้นที่เก็บข้อมูลสื่อและฐานข้อมูลของหน่วยงาน</p>
+                    <h3>สถานะระบบ, Google Integration & Database Index</h3>
+                    <p>พื้นที่เก็บข้อมูลสื่อและระบบดัชนีแคชความเร็วสูง (Fast Memory & Edge Index)</p>
                   </div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: 14 }}>
-                  <div><strong>Google Drive Folder:</strong> {status?.folderName || "คลังสื่อสารความเสี่ยง สสจ.สตูล"}</div>
-                  <div><strong>Google Sheet:</strong> {status?.sheetName || "ฐานข้อมูลคลังสื่อสารความเสี่ยง สสจ.สตูล"}</div>
-                  <div><strong>สถานะการเชื่อมต่อ:</strong> {status?.connected ? "พร้อมใช้งาน ✅" : "กำลังตรวจสอบการเชื่อมต่อ ⚠️"}</div>
+                  <div><strong><i className="fa-brands fa-google-drive" style={{ color: "#0284c7", marginRight: 6 }} />Google Drive Folder:</strong> {status?.folderName || "คลังสื่อสารความเสี่ยง สสจ.สตูล"}</div>
+                  <div><strong><i className="fa-solid fa-table" style={{ color: "#059669", marginRight: 6 }} />Google Sheet:</strong> {status?.sheetName || "ฐานข้อมูลคลังสื่อสารความเสี่ยง สสจ.สตูล"}</div>
+                  <div><strong><i className="fa-solid fa-plug-circle-check" style={{ color: "#0d9488", marginRight: 6 }} />สถานะการเชื่อมต่อ:</strong> {status?.connected ? "พร้อมใช้งาน ✅" : "กำลังตรวจสอบการเชื่อมต่อ ⚠️"}</div>
+                  <div className="db-index-status-box">
+                    <div className="db-index-status-head">
+                      <strong>
+                        <i className="fa-solid fa-bolt" style={{ color: "#d97706", marginRight: 6 }} />
+                        ระบบ Index ฐานข้อมูลความเร็วสูง (SWR + Memory Index)
+                      </strong>
+                      <span className="index-active-pill">ทำงานอัตโนมัติ</span>
+                    </div>
+                    <p>
+                      จัดทำดัชนีค้นหา (Inverted Search & Multi-Tag Index) แล้วจำนวน{" "}
+                      <strong>{items.length} รายการ</strong> และ <strong>{categories.length} Tag</strong>{" "}
+                      ช่วยให้หน้าเว็บโหลดข้อมูลทันทีโดยไม่ต้องรอดึง Google Sheets ใหม่ทุกครั้ง
+                    </p>
+                    <button
+                      type="button"
+                      className="rebuild-index-btn"
+                      onClick={() => void loadItems({ forceRefresh: true })}
+                      disabled={itemsLoading}
+                    >
+                      <RefreshCw className={itemsLoading ? "spin" : ""} size={14} />
+                      ซิงก์และอัปเดต Index จากฐานข้อมูลล่าสุด
+                    </button>
+                  </div>
                 </div>
               </article>
             </div>
@@ -1953,7 +2455,10 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
 
                   <div className="form-grid">
                     <label className="field-wide">
-                      ชื่อสื่อ <em>*</em>
+                      <span className="fa-form-heading">
+                        <span className="fa-field-badge"><i className="fa-solid fa-heading" aria-hidden="true" /></span>
+                        <span>ชื่อสื่อ <em>*</em></span>
+                      </span>
                       <input
                         name="title"
                         required
@@ -1963,31 +2468,25 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                       />
                     </label>
                     <label>
-                      ช่วงเหตุการณ์ <em>*</em>
+                      <span className="fa-form-heading">
+                        <span className="fa-field-badge"><i className="fa-solid fa-timeline" aria-hidden="true" /></span>
+                        <span>ช่วงเหตุการณ์ <em>*</em></span>
+                      </span>
                       <select
                         name="phase"
                         value={uploadPhase}
                         onChange={(event) => setUploadPhase(event.target.value as IncidentPhase)}
                       >
-                        <option value="before">ก่อนเกิดเหตุ</option>
-                        <option value="during">ระหว่างเกิดเหตุ</option>
-                        <option value="after">หลังเกิดเหตุ</option>
+                        <option value="before">ก่อนเกิดเหตุ (เตรียมพร้อม/ป้องกัน)</option>
+                        <option value="during">ระหว่างเกิดเหตุ (รับมือฉุกเฉิน)</option>
+                        <option value="after">หลังเกิดเหตุ (ฟื้นฟูเยียวยา)</option>
                       </select>
                     </label>
                     <label>
-                      ประเภทเหตุการณ์ <em>*</em>
-                      <select
-                        name="category"
-                        value={uploadCategory}
-                        onChange={(event) => setUploadCategory(event.target.value)}
-                      >
-                        {categories.map((cat) => (
-                          <option key={cat} value={cat}>{cat}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      วันที่เหตุการณ์ <em>*</em>
+                      <span className="fa-form-heading">
+                        <span className="fa-field-badge"><i className="fa-solid fa-calendar-day" aria-hidden="true" /></span>
+                        <span>วันที่เหตุการณ์ <em>*</em></span>
+                      </span>
                       <input
                         type="date"
                         name="eventDate"
@@ -1996,8 +2495,147 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                         onChange={(event) => setUploadEventDate(event.target.value)}
                       />
                     </label>
+
+                    <div className="field-wide multi-tag-field-box">
+                      <div className="multi-tag-field-header">
+                        <span className="fa-form-heading">
+                          <span className="fa-field-badge"><i className="fa-solid fa-tags" aria-hidden="true" /></span>
+                          <span>ประเภทเหตุการณ์ (Tag) <em>*</em></span>
+                        </span>
+                        <span className="multi-tag-hint">
+                          <i className="fa-solid fa-circle-check" aria-hidden="true" /> เลือกได้มากกว่า 1 เหตุการณ์ (เลือกแล้ว {uploadCategories.length} รายการ)
+                        </span>
+                      </div>
+
+                      <div className="selected-tags-bar" aria-label="ประเภทเหตุการณ์ที่เลือก">
+                        <span className="selected-tags-label">ที่เลือก:</span>
+                        {uploadCategories.map((cat) => {
+                          const cfg = getTagVisual(cat);
+                          return (
+                            <span
+                              key={`selected-upload-${cat}`}
+                              className="event-tag-badge is-selected-pill"
+                              style={{
+                                backgroundColor: cfg.color,
+                                color: "#ffffff",
+                                borderColor: cfg.color,
+                              }}
+                            >
+                              <i className={cfg.icon} aria-hidden="true" />
+                              <span>{cat}</span>
+                              {uploadCategories.length > 1 && (
+                                <button
+                                  type="button"
+                                  className="selected-pill-remove"
+                                  onClick={() =>
+                                    toggleCategoryTag(cat, uploadCategories, setUploadCategories)
+                                  }
+                                  title={`นำ ${cat} ออก`}
+                                >
+                                  <X size={12} />
+                                </button>
+                              )}
+                            </span>
+                          );
+                        })}
+                      </div>
+
+                      <div className="multi-tag-selector-grid" role="group" aria-label="คลิกเพื่อเลือกประเภทเหตุการณ์">
+                        {categories.map((cat) => {
+                          const cfg = getTagVisual(cat);
+                          const isSelected = uploadCategories.includes(cat);
+                          return (
+                            <button
+                              key={`pick-upload-${cat}`}
+                              type="button"
+                              className={
+                                isSelected
+                                  ? "selectable-tag-chip is-selected"
+                                  : "selectable-tag-chip"
+                              }
+                              style={
+                                isSelected
+                                  ? {
+                                      backgroundColor: cfg.bgColor,
+                                      color: cfg.textColor,
+                                      borderColor: cfg.color,
+                                      boxShadow: `0 0 0 2px ${cfg.borderColor}`,
+                                    }
+                                  : {
+                                      backgroundColor: "#ffffff",
+                                      color: cfg.textColor,
+                                      borderColor: cfg.borderColor,
+                                    }
+                              }
+                              onClick={() =>
+                                toggleCategoryTag(cat, uploadCategories, setUploadCategories)
+                              }
+                              aria-pressed={isSelected}
+                            >
+                              <span
+                                className="event-tag-dot"
+                                style={{ backgroundColor: cfg.color }}
+                              />
+                              <i className={cfg.icon} aria-hidden="true" />
+                              <span>{cat}</span>
+                              {isSelected && (
+                                <span
+                                  className="tag-check-mark"
+                                  style={{ backgroundColor: cfg.color }}
+                                >
+                                  <Check size={11} />
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className="inline-add-tag-bar">
+                        <i className="fa-solid fa-plus-circle" style={{ color: "#0284c7" }} aria-hidden="true" />
+                        <input
+                          value={inlineNewTag}
+                          onChange={(event) => setInlineNewTag(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              void handleQuickAddInlineTag("upload");
+                            }
+                          }}
+                          placeholder="พิมพ์แยก Tag ใหม่เพิ่มเองได้ทันที (เช่น โรคฉี่หนู, น้ำป่าไหลหลาก)"
+                        />
+                        <div className="inline-color-dots">
+                          {TAG_COLOR_PRESETS.slice(0, 6).map((preset) => (
+                            <button
+                              key={`inline-up-${preset.id}`}
+                              type="button"
+                              className={
+                                inlineNewTagColor === preset.color
+                                  ? "inline-color-dot is-selected"
+                                  : "inline-color-dot"
+                              }
+                              style={{ backgroundColor: preset.color }}
+                              title={preset.label}
+                              onClick={() => setInlineNewTagColor(preset.color)}
+                            />
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          className="inline-add-tag-btn"
+                          disabled={!inlineNewTag.trim()}
+                          onClick={() => void handleQuickAddInlineTag("upload")}
+                        >
+                          <Plus size={14} /> แยกเพิ่ม Tag
+                        </button>
+                      </div>
+                    </div>
+
                     <label>
-                      พื้นที่ <em>*</em>
+                      <span className="fa-form-heading">
+                        <span className="fa-field-badge"><i className="fa-solid fa-map-location-dot" aria-hidden="true" /></span>
+                        <span>พื้นที่ <em>*</em></span>
+                      </span>
                       <input
                         name="location"
                         required
@@ -2005,8 +2643,25 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                         onChange={(event) => setUploadLocation(event.target.value)}
                       />
                     </label>
+                    <label>
+                      <span className="fa-form-heading">
+                        <span className="fa-field-badge"><i className="fa-solid fa-bullhorn" aria-hidden="true" /></span>
+                        <span>สถานะการเผยแพร่</span>
+                      </span>
+                      <select
+                        name="status"
+                        value={uploadStatus}
+                        onChange={(event) => setUploadStatus(event.target.value as MediaItem["status"])}
+                      >
+                        <option value="published">เผยแพร่ทันที</option>
+                        <option value="draft">บันทึกเป็นฉบับร่าง</option>
+                      </select>
+                    </label>
                     <label className="field-wide">
-                      คำอธิบาย <em>*</em>
+                      <span className="fa-form-heading">
+                        <span className="fa-field-badge"><i className="fa-solid fa-align-left" aria-hidden="true" /></span>
+                        <span>คำอธิบาย <em>*</em></span>
+                      </span>
                       <textarea
                         name="description"
                         rows={4}
@@ -2017,7 +2672,10 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                       />
                     </label>
                     <label className="field-wide">
-                      คำบรรยายภาพเพื่อการเข้าถึง <em>*</em>
+                      <span className="fa-form-heading">
+                        <span className="fa-field-badge"><i className="fa-solid fa-universal-access" aria-hidden="true" /></span>
+                        <span>คำบรรยายภาพเพื่อการเข้าถึง <em>*</em></span>
+                      </span>
                       <input
                         name="altText"
                         required
@@ -2027,24 +2685,16 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                       />
                     </label>
                     <label className="field-wide">
-                      คำค้นหา <span>(คั่นด้วยเครื่องหมายจุลภาค)</span>
+                      <span className="fa-form-heading">
+                        <span className="fa-field-badge"><i className="fa-solid fa-hashtag" aria-hidden="true" /></span>
+                        <span>คำค้นหา <span>(คั่นด้วยเครื่องหมายจุลภาค)</span></span>
+                      </span>
                       <input
                         name="keywords"
                         value={uploadKeywords}
                         onChange={(event) => setUploadKeywords(event.target.value)}
                         placeholder="น้ำท่วม, ป้องกันโรค, โรคฉี่หนู"
                       />
-                    </label>
-                    <label>
-                      สถานะ
-                      <select
-                        name="status"
-                        value={uploadStatus}
-                        onChange={(event) => setUploadStatus(event.target.value as MediaItem["status"])}
-                      >
-                        <option value="published">เผยแพร่ทันที</option>
-                        <option value="draft">บันทึกเป็นฉบับร่าง</option>
-                      </select>
                     </label>
                   </div>
                 </fieldset>
@@ -2181,31 +2831,204 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
               </div>
 
               <div className="form-grid">
-                <label className="field-wide">ชื่อสื่อ <em>*</em><input name="title" required defaultValue={editing.title} /></label>
-                <label>ช่วงเหตุการณ์ <em>*</em>
+                <label className="field-wide">
+                  <span className="fa-form-heading">
+                    <span className="fa-field-badge"><i className="fa-solid fa-heading" aria-hidden="true" /></span>
+                    <span>ชื่อสื่อ <em>*</em></span>
+                  </span>
+                  <input name="title" required defaultValue={editing.title} />
+                </label>
+                <label>
+                  <span className="fa-form-heading">
+                    <span className="fa-field-badge"><i className="fa-solid fa-timeline" aria-hidden="true" /></span>
+                    <span>ช่วงเหตุการณ์ <em>*</em></span>
+                  </span>
                   <select name="phase" defaultValue={editing.phase}>
                     <option value="before">ก่อนเกิดเหตุ</option>
                     <option value="during">ระหว่างเกิดเหตุ</option>
                     <option value="after">หลังเกิดเหตุ</option>
                   </select>
                 </label>
-                <label>ประเภทเหตุการณ์ <em>*</em>
-                  <select name="category" defaultValue={editing.category}>
-                    {categories.map((cat) => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
-                  </select>
+                <label>
+                  <span className="fa-form-heading">
+                    <span className="fa-field-badge"><i className="fa-solid fa-calendar-day" aria-hidden="true" /></span>
+                    <span>วันที่เหตุการณ์ <em>*</em></span>
+                  </span>
+                  <input type="date" name="eventDate" required defaultValue={editing.eventDate} />
                 </label>
-                <label>วันที่เหตุการณ์ <em>*</em><input type="date" name="eventDate" required defaultValue={editing.eventDate} /></label>
-                <label>พื้นที่ <em>*</em><input name="location" required defaultValue={editing.location} /></label>
-                <label className="field-wide">คำอธิบาย <em>*</em><textarea name="description" rows={4} required defaultValue={editing.description} /></label>
-                <label className="field-wide">คำบรรยายภาพเพื่อการเข้าถึง <em>*</em><input name="altText" required defaultValue={editing.altText} /></label>
-                <label className="field-wide">คำค้นหา <span>(คั่นด้วยเครื่องหมายจุลภาค)</span><input name="keywords" defaultValue={editing.keywords.join(", ")} /></label>
-                <label>สถานะ
+
+                <div className="field-wide multi-tag-field-box">
+                  <div className="multi-tag-field-header">
+                    <span className="fa-form-heading">
+                      <span className="fa-field-badge"><i className="fa-solid fa-tags" aria-hidden="true" /></span>
+                      <span>ประเภทเหตุการณ์ (Tag) <em>*</em></span>
+                    </span>
+                    <span className="multi-tag-hint">
+                      <i className="fa-solid fa-circle-check" aria-hidden="true" /> เลือกได้มากกว่า 1 เหตุการณ์ (เลือกแล้ว {editCategories.length} รายการ)
+                    </span>
+                  </div>
+
+                  <div className="selected-tags-bar" aria-label="ประเภทเหตุการณ์ที่เลือก">
+                    <span className="selected-tags-label">ที่เลือก:</span>
+                    {editCategories.map((cat) => {
+                      const cfg = getTagVisual(cat);
+                      return (
+                        <span
+                          key={`selected-edit-${cat}`}
+                          className="event-tag-badge is-selected-pill"
+                          style={{
+                            backgroundColor: cfg.color,
+                            color: "#ffffff",
+                            borderColor: cfg.color,
+                          }}
+                        >
+                          <i className={cfg.icon} aria-hidden="true" />
+                          <span>{cat}</span>
+                          {editCategories.length > 1 && (
+                            <button
+                              type="button"
+                              className="selected-pill-remove"
+                              onClick={() =>
+                                toggleCategoryTag(cat, editCategories, setEditCategories)
+                              }
+                              title={`นำ ${cat} ออก`}
+                            >
+                              <X size={12} />
+                            </button>
+                          )}
+                        </span>
+                      );
+                    })}
+                  </div>
+
+                  <div className="multi-tag-selector-grid" role="group" aria-label="คลิกเพื่อเลือกประเภทเหตุการณ์">
+                    {categories.map((cat) => {
+                      const cfg = getTagVisual(cat);
+                      const isSelected = editCategories.includes(cat);
+                      return (
+                        <button
+                          key={`pick-edit-${cat}`}
+                          type="button"
+                          className={
+                            isSelected
+                              ? "selectable-tag-chip is-selected"
+                              : "selectable-tag-chip"
+                          }
+                          style={
+                            isSelected
+                              ? {
+                                  backgroundColor: cfg.bgColor,
+                                  color: cfg.textColor,
+                                  borderColor: cfg.color,
+                                  boxShadow: `0 0 0 2px ${cfg.borderColor}`,
+                                }
+                              : {
+                                  backgroundColor: "#ffffff",
+                                  color: cfg.textColor,
+                                  borderColor: cfg.borderColor,
+                                }
+                          }
+                          onClick={() =>
+                            toggleCategoryTag(cat, editCategories, setEditCategories)
+                          }
+                          aria-pressed={isSelected}
+                        >
+                          <span
+                            className="event-tag-dot"
+                            style={{ backgroundColor: cfg.color }}
+                          />
+                          <i className={cfg.icon} aria-hidden="true" />
+                          <span>{cat}</span>
+                          {isSelected && (
+                            <span
+                              className="tag-check-mark"
+                              style={{ backgroundColor: cfg.color }}
+                            >
+                              <Check size={11} />
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="inline-add-tag-bar">
+                    <i className="fa-solid fa-plus-circle" style={{ color: "#0284c7" }} aria-hidden="true" />
+                    <input
+                      value={inlineNewTag}
+                      onChange={(event) => setInlineNewTag(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void handleQuickAddInlineTag("edit");
+                        }
+                      }}
+                      placeholder="พิมพ์แยก Tag ใหม่เพิ่มเองได้ทันที (เช่น โรคฉี่หนู, น้ำป่าไหลหลาก)"
+                    />
+                    <div className="inline-color-dots">
+                      {TAG_COLOR_PRESETS.slice(0, 6).map((preset) => (
+                        <button
+                          key={`inline-ed-${preset.id}`}
+                          type="button"
+                          className={
+                            inlineNewTagColor === preset.color
+                              ? "inline-color-dot is-selected"
+                              : "inline-color-dot"
+                          }
+                          style={{ backgroundColor: preset.color }}
+                          title={preset.label}
+                          onClick={() => setInlineNewTagColor(preset.color)}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="inline-add-tag-btn"
+                      disabled={!inlineNewTag.trim()}
+                      onClick={() => void handleQuickAddInlineTag("edit")}
+                    >
+                      <Plus size={14} /> แยกเพิ่ม Tag
+                    </button>
+                  </div>
+                </div>
+
+                <label>
+                  <span className="fa-form-heading">
+                    <span className="fa-field-badge"><i className="fa-solid fa-map-location-dot" aria-hidden="true" /></span>
+                    <span>พื้นที่ <em>*</em></span>
+                  </span>
+                  <input name="location" required defaultValue={editing.location} />
+                </label>
+                <label>
+                  <span className="fa-form-heading">
+                    <span className="fa-field-badge"><i className="fa-solid fa-bullhorn" aria-hidden="true" /></span>
+                    <span>สถานะการเผยแพร่</span>
+                  </span>
                   <select name="status" defaultValue={editing.status}>
                     <option value="published">เผยแพร่</option>
                     <option value="draft">ฉบับร่าง</option>
                   </select>
+                </label>
+                <label className="field-wide">
+                  <span className="fa-form-heading">
+                    <span className="fa-field-badge"><i className="fa-solid fa-align-left" aria-hidden="true" /></span>
+                    <span>คำอธิบาย <em>*</em></span>
+                  </span>
+                  <textarea name="description" rows={4} required defaultValue={editing.description} />
+                </label>
+                <label className="field-wide">
+                  <span className="fa-form-heading">
+                    <span className="fa-field-badge"><i className="fa-solid fa-universal-access" aria-hidden="true" /></span>
+                    <span>คำบรรยายภาพเพื่อการเข้าถึง <em>*</em></span>
+                  </span>
+                  <input name="altText" required defaultValue={editing.altText} />
+                </label>
+                <label className="field-wide">
+                  <span className="fa-form-heading">
+                    <span className="fa-field-badge"><i className="fa-solid fa-hashtag" aria-hidden="true" /></span>
+                    <span>คำค้นหา <span>(คั่นด้วยเครื่องหมายจุลภาค)</span></span>
+                  </span>
+                  <input name="keywords" defaultValue={editing.keywords.join(", ")} />
                 </label>
               </div>
               <div className="admin-modal-actions">

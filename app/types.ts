@@ -15,6 +15,7 @@ export type MediaItem = {
   description: string;
   phase: IncidentPhase;
   category: string;
+  categories?: string[];
   eventDate: string;
   location: string;
   keywords: string[];
@@ -31,6 +32,7 @@ export type MediaItem = {
   updatedBy?: string;
   revisionCount?: number;
   gallery?: MediaSlide[];
+  _searchIndex?: string;
 };
 
 export type MediaResponse = {
