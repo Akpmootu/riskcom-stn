@@ -479,7 +479,12 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       if (!response.ok) {
         throw new Error(result.error || "โหลดรายการสื่อไม่สำเร็จ");
       }
-      setItems(result.items);
+      const activeItems = (result.items || []).filter(
+        (item) =>
+          Boolean(item && item.id) &&
+          String((item as { status?: string }).status || "").toLowerCase() !== "deleted",
+      );
+      setItems(activeItems);
       setSource(result.source);
     } catch (error) {
       const message =
@@ -649,18 +654,30 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
 
   async function deleteItem(item: MediaItem) {
     if (!status?.connected || !window.confirm(`ย้าย “${item.title}” ไปถังขยะหรือไม่`)) return;
-    const response = await fetch("/api/admin/delete", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id: item.id }),
-    });
-    const result = (await response.json()) as { ok?: boolean; error?: string };
-    if (!response.ok || !result.ok) {
-      setFormMessage({ type: "error", text: result.error || "ลบสื่อไม่สำเร็จ" });
-      return;
+    setFormMessage(null);
+    try {
+      const response = await fetch("/api/admin/delete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: item.id }),
+      });
+      const result = (await response.json()) as { ok?: boolean; error?: string };
+      if (!response.ok || !result.ok) {
+        setFormMessage({ type: "error", text: result.error || "ลบสื่อไม่สำเร็จ" });
+        return;
+      }
+      clearMediaCache();
+      setItems((current) => current.filter((entry) => entry.id !== item.id));
+      setFormMessage({
+        type: "success",
+        text: `ลบสื่อ “${item.title}” ออกจากคลังสื่อเรียบร้อยแล้ว`,
+      });
+    } catch (error) {
+      setFormMessage({
+        type: "error",
+        text: error instanceof Error ? error.message : "ลบสื่อไม่สำเร็จ",
+      });
     }
-    clearMediaCache();
-    setItems((current) => current.filter((entry) => entry.id !== item.id));
   }
 
   async function handleEdit(event: FormEvent<HTMLFormElement>) {

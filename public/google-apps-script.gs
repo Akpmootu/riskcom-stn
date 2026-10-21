@@ -229,6 +229,7 @@ function listMedia_(status) {
       return item;
     })
     .filter(function (item) {
+      if (String(item.status || "").toLowerCase() === "deleted") return false;
       return !status || item.status === status;
     })
     .sort(function (a, b) {

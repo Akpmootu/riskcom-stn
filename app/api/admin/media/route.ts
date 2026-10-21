@@ -14,7 +14,13 @@ async function mediaForUser() {
     throw new Error(String(result.error || "ไม่สามารถโหลดรายการสื่อได้"));
   }
 
-  const items = result.items as MediaItem[];
+  const rawItems = result.items as Array<MediaItem & { status?: string }>;
+  const items = rawItems.filter(
+    (item) =>
+      Boolean(item && item.id) &&
+      String(item.status || "").toLowerCase() !== "deleted",
+  ) as MediaItem[];
+
   if (user.role === "uploader") {
     return {
       user,

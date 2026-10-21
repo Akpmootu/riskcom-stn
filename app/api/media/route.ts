@@ -30,7 +30,14 @@ export async function GET() {
       throw new Error(result.error || "ไม่พบรายการสื่อ");
     }
 
-    return json({ items: result.items, source: "google" });
+    const activeItems = result.items.filter(
+      (item) =>
+        Boolean(item && item.id) &&
+        String((item as { status?: string }).status || "").toLowerCase() !== "deleted" &&
+        item.status === "published",
+    );
+
+    return json({ items: activeItems, source: "google" });
   } catch {
     return json({
       items: sampleMedia,
