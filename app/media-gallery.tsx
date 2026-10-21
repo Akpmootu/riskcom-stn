@@ -7,14 +7,17 @@ import {
   Braces,
   CalendarDays,
   Check,
+  ChevronLeft,
   ChevronRight,
   ClipboardCheck,
   CloudRain,
   Eye,
   FileText,
+  Globe,
   HeartPulse,
   Home,
   Image as ImageIcon,
+  Info,
   MapPin,
   Maximize2,
   Menu,
@@ -49,21 +52,21 @@ const phases: Array<{
     id: "before",
     step: "01",
     title: "ก่อนเกิดเหตุ",
-    description: "รู้ความเสี่ยง เตรียมคน เตรียมของ และติดตามสัญญาณเตือน",
+    description: "รู้ก่อน ป้องกันได้ เตรียมความพร้อม ลดความเสี่ยง ดูแลตนเองและครอบครัว",
     icon: ShieldCheck,
   },
   {
     id: "during",
     step: "02",
     title: "ระหว่างเกิดเหตุ",
-    description: "ข้อมูลที่ต้องรู้ทันที เพื่อลดอันตรายและตัดสินใจอย่างปลอดภัย",
+    description: "ติดตามสถานการณ์ ปฏิบัติตามคำแนะนำ ดูแลความปลอดภัยของตนเองและคนรอบข้าง",
     icon: AlertTriangle,
   },
   {
     id: "after",
     step: "03",
     title: "หลังเกิดเหตุ",
-    description: "ฟื้นฟูสุขภาพ ทำความสะอาด และป้องกันเหตุหรือโรคซ้ำ",
+    description: "ฟื้นฟูสุขภาพ สำรวจความเสียหาย และป้องกันการเกิดซ้ำ",
     icon: ClipboardCheck,
   },
 ];
@@ -73,6 +76,14 @@ const phaseLabels: Record<IncidentPhase, string> = {
   during: "ระหว่างเกิดเหตุ",
   after: "หลังเกิดเหตุ",
 };
+
+const popularKeywords = [
+  "ไข้เลือดออก",
+  "โรคอุบัติใหม่",
+  "PM2.5",
+  "อุทกภัย",
+  "สุขภาพเด็ก",
+];
 
 function formatThaiDate(value: string) {
   if (!value) return "ไม่ระบุวันที่";
@@ -106,6 +117,13 @@ function getVisualClass(category: string) {
   if (category.includes("หมอก") || category.includes("ฝุ่น")) return "haze";
   if (category.includes("อุบัติเหตุ")) return "road";
   return "recovery";
+}
+
+function getMediaTypeLabel(item: MediaItem) {
+  if (item.fileType.includes("pdf")) return "คู่มือ / PDF";
+  if (item.fileType.includes("video")) return "วิดีโอ";
+  if (item.category.includes("โรค") || item.category.includes("หมอก")) return "อินโฟกราฟิก";
+  return "โปสเตอร์";
 }
 
 function MediaArtwork({ item, large = false }: { item: MediaItem; large?: boolean }) {
@@ -146,13 +164,6 @@ export function MediaGallerySkeleton() {
       aria-busy="true"
       aria-describedby="gallery-loading-status"
     >
-      <div className="top-ribbon">
-        <div className="container ribbon-inner">
-          <span><HeartPulse size={15} /> ศูนย์สื่อสารความเสี่ยงด้านสุขภาพ จังหวัดสตูล</span>
-          <span>ข้อมูลเพื่อประชาชน • ใช้งานและเผยแพร่ต่อได้</span>
-        </div>
-      </div>
-
       <header className="site-header">
         <div className="container nav-wrap">
           <a className="brand" href="#top" aria-label="กลับไปหน้าแรก">
@@ -201,8 +212,6 @@ export function MediaGallerySkeleton() {
             </div>
           </div>
           <div className="hero-panel">
-            <div className="island-shape island-shape-one" />
-            <div className="island-shape island-shape-two" />
             <div className="alert-card skeleton-alert-card" aria-hidden="true">
               <div className="skeleton-alert-head">
                 <SkeletonBlock />
@@ -224,26 +233,28 @@ export function MediaGallerySkeleton() {
 
       <section className="phase-section" id="phases" aria-label="กำลังโหลดช่วงเหตุการณ์">
         <div className="container">
-          <div className="section-heading skeleton-section-heading" aria-hidden="true">
-            <div>
-              <SkeletonBlock className="skeleton-kicker" />
-              <SkeletonBlock className="skeleton-section-title" />
+          <div className="phase-surface">
+            <div className="section-heading skeleton-section-heading" aria-hidden="true">
+              <div>
+                <SkeletonBlock className="skeleton-kicker" />
+                <SkeletonBlock className="skeleton-section-title" />
+              </div>
+              <div className="skeleton-section-copy">
+                <SkeletonBlock />
+                <SkeletonBlock />
+              </div>
             </div>
-            <div className="skeleton-section-copy">
-              <SkeletonBlock />
-              <SkeletonBlock />
+            <div className="phase-path skeleton-phase-path" aria-hidden="true">
+              {[0, 1, 2].map((item) => (
+                <article className="phase-card skeleton-phase-card" key={item}>
+                  <SkeletonBlock className="skeleton-phase-icon" />
+                  <SkeletonBlock className="skeleton-phase-title" />
+                  <SkeletonBlock className="skeleton-phase-copy" />
+                  <SkeletonBlock className="skeleton-phase-copy skeleton-phase-copy-short" />
+                  <SkeletonBlock className="skeleton-phase-link" />
+                </article>
+              ))}
             </div>
-          </div>
-          <div className="phase-path skeleton-phase-path" aria-hidden="true">
-            {[0, 1, 2].map((item) => (
-              <article className="phase-card skeleton-phase-card" key={item}>
-                <SkeletonBlock className="skeleton-phase-icon" />
-                <SkeletonBlock className="skeleton-phase-title" />
-                <SkeletonBlock className="skeleton-phase-copy" />
-                <SkeletonBlock className="skeleton-phase-copy skeleton-phase-copy-short" />
-                <SkeletonBlock className="skeleton-phase-link" />
-              </article>
-            ))}
           </div>
         </div>
       </section>
@@ -271,7 +282,7 @@ export function MediaGallerySkeleton() {
           </div>
           <SkeletonBlock className="skeleton-result-line" />
           <div className="gallery-grid" aria-hidden="true">
-            {[0, 1, 2, 3, 4, 5].map((item) => (
+            {[0, 1, 2, 3].map((item) => (
               <article className="media-card skeleton-media-card" key={item}>
                 <SkeletonBlock className="skeleton-media-visual" />
                 <div className="media-body">
@@ -337,6 +348,7 @@ export function MediaGallery() {
   const [refreshing, setRefreshing] = useState(false);
   const [cacheSavedAt, setCacheSavedAt] = useState<number | null>(null);
   const [showingCachedData, setShowingCachedData] = useState(false);
+  const [featuredIndex, setFeaturedIndex] = useState(0);
 
   const applyMediaResponse = useCallback(
     (result: MediaResponse, cachedAt: number, fromCache: boolean) => {
@@ -509,7 +521,9 @@ export function MediaGallery() {
     });
   }, [category, items, phase, query]);
 
-  const featured = items[0];
+  const featuredList = useMemo(() => items.slice(0, 4), [items]);
+  const safeFeaturedIndex = featuredList.length ? featuredIndex % featuredList.length : 0;
+  const featured = featuredList[safeFeaturedIndex] ?? items[0];
 
   async function refreshMedia() {
     if (refreshing) return;
@@ -565,16 +579,9 @@ export function MediaGallery() {
 
   return (
     <main className="site-shell" id="top">
-      <div className="top-ribbon">
-        <div className="container ribbon-inner">
-          <span><HeartPulse size={15} /> ศูนย์สื่อสารความเสี่ยงด้านสุขภาพ จังหวัดสตูล</span>
-          <span>ข้อมูลเพื่อประชาชน • ใช้งานและเผยแพร่ต่อได้</span>
-        </div>
-      </div>
-
       <header className="site-header">
         <div className="container nav-wrap">
-          <a className="brand" href="#" aria-label="กลับไปหน้าแรก">
+          <a className="brand" href="#top" aria-label="กลับไปหน้าแรก">
             <span className="brand-mark">
               <img src="/satun-risk-logo.png" alt="" aria-hidden="true" />
             </span>
@@ -593,12 +600,34 @@ export function MediaGallery() {
             {menuOpen ? <X size={22} /> : <Menu size={22} />}
           </button>
           <nav className={menuOpen ? "nav-links is-open" : "nav-links"} aria-label="เมนูหลัก">
-            <a href="#phases" onClick={() => setMenuOpen(false)}>ช่วงเหตุการณ์</a>
-            <a href="#gallery" onClick={() => setMenuOpen(false)}>คลังสื่อ</a>
-            <a href="#about" onClick={() => setMenuOpen(false)}>เกี่ยวกับเรา</a>
-            <a className="admin-link" href="/admin">
-              สำหรับผู้ดูแล <ArrowRight size={16} />
+            <a className="nav-item is-active" href="#top" onClick={() => setMenuOpen(false)}>
+              <Home size={16} /> หน้าแรก
             </a>
+            <a className="nav-item" href="#phases" onClick={() => setMenuOpen(false)}>
+              <ShieldCheck size={16} /> ข้อมูลสถานการณ์
+            </a>
+            <a className="nav-item" href="#gallery" onClick={() => setMenuOpen(false)}>
+              <FileText size={16} /> คลังสื่อ
+            </a>
+            <a className="nav-item" href="#about" onClick={() => setMenuOpen(false)}>
+              <Info size={16} /> เกี่ยวกับเรา
+            </a>
+            <div className="nav-right-group">
+              <button
+                type="button"
+                className="nav-search-trigger"
+                aria-label="ค้นหาในคลังสื่อ"
+                onClick={() => {
+                  setMenuOpen(false);
+                  jumpToGallery();
+                }}
+              >
+                <Search size={18} />
+              </button>
+              <a className="admin-link" href="/admin">
+                <UserRound size={15} /> สำหรับผู้ดูแลระบบ <ArrowRight size={15} />
+              </a>
+            </div>
           </nav>
         </div>
       </header>
@@ -607,11 +636,11 @@ export function MediaGallery() {
         <div className="hero-pattern" />
         <div className="container hero-grid">
           <div className="hero-copy">
-            <span className="eyebrow"><Sparkles size={16} /> SATUN RISK COMMUNICATION HUB</span>
+            <span className="eyebrow"><Sparkles size={15} /> SATUN RISK COMMUNICATION HUB</span>
             <h1>รู้ก่อน เตรียมพร้อม<br />รับมือไปด้วยกัน</h1>
             <p>
-              ศูนย์รวมสื่อที่เชื่อถือได้สำหรับอุบัติการณ์ในจังหวัดสตูล
-              ตั้งแต่การเตรียมตัว การรับมือ จนถึงการฟื้นฟูหลังเหตุการณ์
+              ศูนย์รวมสื่อที่เชื่อถือได้สำหรับการเฝ้าระวัง ป้องกัน และสื่อสารความเสี่ยง
+              ด้านสุขภาพในจังหวัดสตูล เพื่อให้ประชาชนมีความรู้ พร้อมรับมือทุกสถานการณ์
             </p>
             <label className="hero-search">
               <Search size={21} aria-hidden="true" />
@@ -619,37 +648,108 @@ export function MediaGallery() {
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                onFocus={jumpToGallery}
-                placeholder="ค้นหาเหตุการณ์ พื้นที่ หรือคำแนะนำ..."
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") jumpToGallery();
+                }}
+                placeholder="ค้นหาสถานการณ์ โรค หรือสื่อที่คุณสนใจ..."
               />
-              <button type="button" onClick={jumpToGallery}>ค้นหา</button>
+              <button type="button" onClick={jumpToGallery}>
+                ค้นหา <ArrowRight size={16} />
+              </button>
             </label>
-            <div className="hero-metrics" aria-label="สรุปข้อมูล">
-              <span><strong>{items.length || "—"}</strong> สื่อพร้อมใช้</span>
-              <span><strong>3</strong> ช่วงเหตุการณ์</span>
-              <span><strong>7</strong> อำเภอในสตูล</span>
+
+            <div className="hero-popular" aria-label="คำค้นหายอดนิยม">
+              <span className="hero-popular-label">คำค้นหายอดนิยม :</span>
+              <div className="hero-popular-tags">
+                {popularKeywords.map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    className={query === tag ? "popular-tag is-active" : "popular-tag"}
+                    onClick={() => {
+                      setQuery((current) => (current === tag ? "" : tag));
+                      jumpToGallery();
+                    }}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
           <div className="hero-panel">
-            <div className="island-shape island-shape-one" />
-            <div className="island-shape island-shape-two" />
             <div className="alert-card">
               <div className="alert-card-head">
-                <span className="live-dot" />
-                <span>ประกาศที่ควรติดตาม</span>
-                <small>อัปเดตล่าสุด</small>
+                <span className="alert-badge-pill">
+                  <span className="live-dot" />
+                  <span>ประกาศเพื่อประชาชน</span>
+                </span>
+                <small>อัปเดตล่าสุด {featured ? formatThaiDate(featured.eventDate) : "วันนี้"}</small>
               </div>
-              <div className="alert-icon"><CloudRain size={34} /></div>
-              <p>เฝ้าระวัง</p>
-              <h2>{featured?.title ?? "เฝ้าระวังเหตุการณ์ในจังหวัดสตูล"}</h2>
-              <div className="alert-meta">
-                <span><MapPin size={15} /> {featured?.location ?? "จังหวัดสตูล"}</span>
-                <span><CalendarDays size={15} /> {featured ? formatThaiDate(featured.eventDate) : "วันนี้"}</span>
+
+              <div className="alert-card-body">
+                <div className="alert-title-row">
+                  <div className="alert-icon">
+                    <CloudRain size={30} />
+                  </div>
+                  <div>
+                    <span className="alert-kicker">{featured?.category ?? "เฝ้าระวังสุขภาพ"}</span>
+                    <h2>{featured?.title ?? "เฝ้าระวังเหตุการณ์ในจังหวัดสตูล"}</h2>
+                  </div>
+                </div>
+
+                <p className="alert-description">
+                  {featured?.description ?? "รู้จักกลุ่มเสี่ยง ดูแลตนเอง และป้องกันได้อย่างปลอดภัย"}
+                </p>
+
+                <div className="alert-meta">
+                  <span><MapPin size={15} /> {featured?.location ?? "จังหวัดสตูล"}</span>
+                  <span className="alert-meta-divider" aria-hidden="true">|</span>
+                  <span><CalendarDays size={15} /> {featured ? formatThaiDate(featured.eventDate) : "วันนี้"}</span>
+                </div>
+
+                <div className="alert-card-footer">
+                  <button
+                    type="button"
+                    className="alert-cta-btn"
+                    onClick={() => featured && setSelected(featured)}
+                  >
+                    ดูข้อมูลเพิ่มเติม <ArrowRight size={16} />
+                  </button>
+
+                  {featuredList.length > 1 && (
+                    <div className="alert-carousel-controls" aria-label="เลื่อนดูประกาศ">
+                      <button
+                        type="button"
+                        aria-label="ประกาศก่อนหน้า"
+                        onClick={() =>
+                          setFeaturedIndex((idx) => (idx - 1 + featuredList.length) % featuredList.length)
+                        }
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                      <div className="alert-dots" aria-hidden="true">
+                        {featuredList.map((item, idx) => (
+                          <span
+                            key={item.id}
+                            className={idx === safeFeaturedIndex ? "alert-dot is-active" : "alert-dot"}
+                          />
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        aria-label="ประกาศถัดไป"
+                        onClick={() =>
+                          setFeaturedIndex((idx) => (idx + 1) % featuredList.length)
+                        }
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
-              <button type="button" onClick={() => featured && setSelected(featured)}>
-                ดูข้อมูลฉบับเต็ม <ChevronRight size={18} />
-              </button>
             </div>
           </div>
         </div>
@@ -664,67 +764,113 @@ export function MediaGallery() {
 
       <section className="phase-section" id="phases">
         <div className="container">
-          <div className="section-heading phase-heading">
-            <div>
-              <span className="section-kicker">ข้อมูลตามช่วงเวลา</span>
-              <h2>เลือกสื่อให้ตรงกับสถานการณ์</h2>
+          <div className="phase-surface">
+            <div className="section-heading phase-heading">
+              <div>
+                <span className="section-kicker">HIGHLIGHT</span>
+                <h2>เลือกสื่อให้ตรงกับสถานการณ์</h2>
+                <p>เข้าถึงสื่อความรู้ คำแนะนำ และแนวทางปฏิบัติที่เหมาะสม ในทุกช่วงสถานการณ์</p>
+              </div>
+              <button
+                type="button"
+                className="section-outline-pill"
+                onClick={() => {
+                  setPhase("all");
+                  jumpToGallery();
+                }}
+              >
+                ดูสถานการณ์ทั้งหมด <ArrowRight size={16} />
+              </button>
             </div>
-            <p>แต่ละช่วงต้องการข้อมูลและการตัดสินใจที่ต่างกัน เลือกช่วงที่คุณกำลังเผชิญอยู่</p>
-          </div>
-          <div className="phase-path" aria-label="กรองตามช่วงเหตุการณ์">
-            {phases.map((item) => {
-              const Icon = item.icon;
-              const count = items.filter((media) => media.phase === item.id).length;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={phase === item.id ? `phase-card phase-${item.id} is-active` : `phase-card phase-${item.id}`}
-                  onClick={() => {
-                    setPhase((current) => (current === item.id ? "all" : item.id));
-                    document.getElementById("gallery")?.scrollIntoView({ behavior: "smooth" });
-                  }}
-                  aria-pressed={phase === item.id}
-                >
-                  <span className="phase-step">{item.step}</span>
-                  <span className="phase-icon"><Icon size={24} /></span>
-                  <span className="phase-content">
-                    <strong>{item.title}</strong>
-                    <small>{item.description}</small>
-                    <em>{count} รายการ <ArrowRight size={15} /></em>
-                  </span>
-                </button>
-              );
-            })}
+
+            <div className="phase-path" aria-label="กรองตามช่วงเหตุการณ์">
+              {phases.map((item) => {
+                const Icon = item.icon;
+                const count = items.filter((media) => media.phase === item.id).length;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={phase === item.id ? `phase-card phase-${item.id} is-active` : `phase-card phase-${item.id}`}
+                    onClick={() => {
+                      setPhase((current) => (current === item.id ? "all" : item.id));
+                      document.getElementById("gallery")?.scrollIntoView({ behavior: "smooth" });
+                    }}
+                    aria-pressed={phase === item.id}
+                  >
+                    <span className="phase-step">{item.step}</span>
+                    <span className="phase-icon"><Icon size={24} /></span>
+                    <span className="phase-content">
+                      <strong>{item.title}</strong>
+                      <small>{item.description}</small>
+                      <em>ดูสื่อทั้งหมด ({count}) <ArrowRight size={15} /></em>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       </section>
 
       <section className="gallery-section" id="gallery">
         <div className="container">
-          <div className="section-heading gallery-heading">
-            <div>
-              <span className="section-kicker">MEDIA GALLERY</span>
-              <h2>สื่อล่าสุดเพื่อประชาชน</h2>
+          <div className="gallery-header-row">
+            <div className="section-heading gallery-heading">
+              <div>
+                <span className="section-kicker">MEDIA LIBRARY</span>
+                <h2>สื่อสารสู่ประชาชน</h2>
+                <p>สื่อความรู้ที่ผ่านการตรวจสอบจากหน่วยงานสาธารณสุขจังหวัดสตูล ดาวน์โหลดและนำไปใช้ได้ทันที</p>
+              </div>
             </div>
-            <p>ดู ดาวน์โหลด และแชร์ต่อได้ทันที เพื่อให้ข้อมูลที่ถูกต้องไปถึงคนที่ต้องการ</p>
+
+            <div className="gallery-tools">
+              <label className="gallery-search">
+                <Search size={18} />
+                <span className="sr-only">ค้นหาในคลังสื่อ</span>
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="ค้นหาชื่อสื่อ หัวข้อ หรือสถานการณ์..."
+                />
+                {query && (
+                  <button type="button" aria-label="ล้างคำค้น" onClick={() => setQuery("")}>
+                    <X size={16} />
+                  </button>
+                )}
+              </label>
+
+              <label className="gallery-select-wrap">
+                <span className="sr-only">กรองตามหมวดหมู่</span>
+                <select value={category} onChange={(event) => setCategory(event.target.value)}>
+                  {categories.map((item) => (
+                    <option key={item} value={item}>
+                      {item === "ทั้งหมด" ? "หมวดหมู่: ทั้งหมด" : item}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="gallery-select-wrap">
+                <span className="sr-only">กรองตามช่วงเหตุการณ์</span>
+                <select
+                  value={phase}
+                  onChange={(event) => setPhase(event.target.value as IncidentPhase | "all")}
+                >
+                  <option value="all">ช่วงเหตุการณ์: ทั้งหมด</option>
+                  <option value="before">ก่อนเกิดเหตุ</option>
+                  <option value="during">ระหว่างเกิดเหตุ</option>
+                  <option value="after">หลังเกิดเหตุ</option>
+                </select>
+              </label>
+
+              <button type="button" className="gallery-search-btn" onClick={jumpToGallery}>
+                <Search size={16} /> ค้นหา
+              </button>
+            </div>
           </div>
 
-          <div className="gallery-tools">
-            <label className="gallery-search">
-              <Search size={18} />
-              <span className="sr-only">ค้นหาในคลังสื่อ</span>
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="ค้นหาในคลังสื่อ"
-              />
-              {query && (
-                <button type="button" aria-label="ล้างคำค้น" onClick={() => setQuery("")}>
-                  <X size={17} />
-                </button>
-              )}
-            </label>
+          <div className="gallery-subbar">
             <div className="filter-chips" aria-label="กรองตามประเภท">
               {categories.map((item) => (
                 <button
@@ -739,6 +885,7 @@ export function MediaGallery() {
                 </button>
               ))}
             </div>
+
             <div className="gallery-tool-actions">
               {(phase !== "all" || category !== "ทั้งหมด" || query) && (
                 <button
@@ -783,33 +930,52 @@ export function MediaGallery() {
                 <article className="media-card" key={item.id}>
                   <button className="media-preview" type="button" onClick={() => setSelected(item)}>
                     <MediaArtwork item={item} />
-                    <span className="preview-overlay"><Eye size={18} /> ดูสื่อ</span>
+                    <span className="preview-overlay"><Eye size={18} /> ดูสื่อขยาย</span>
+                    <span className="media-type-pill">
+                      {item.fileType.includes("pdf") ? <FileText size={13} /> : <ImageIcon size={13} />}
+                      {getMediaTypeLabel(item)}
+                    </span>
                     <span className={`phase-badge badge-${item.phase}`}>{phaseLabels[item.phase]}</span>
                   </button>
                   <div className="media-body">
-                    <div className="media-category">
-                      <span>{item.fileType.includes("pdf") ? <FileText size={15} /> : <ImageIcon size={15} />}</span>
-                      {item.category}
-                    </div>
-                    <h3>{item.title}</h3>
+                    <h3 onClick={() => setSelected(item)}>{item.title}</h3>
                     <p>{item.description}</p>
-                    <div className="media-location"><MapPin size={14} /> {item.location}</div>
+                    <div className="media-meta-row">
+                      <time dateTime={item.eventDate}>
+                        <CalendarDays size={14} /> {formatThaiDate(item.eventDate)}
+                      </time>
+                      <span className="media-location">
+                        <MapPin size={14} /> {item.location}
+                      </span>
+                    </div>
                     <div className="media-footer">
-                      <time dateTime={item.eventDate}>{formatThaiDate(item.eventDate)}</time>
-                      <div>
-                        {item.downloadUrl ? (
-                          <a href={item.downloadUrl} download aria-label={`ดาวน์โหลด ${item.title}`}>
-                            <ArrowDownToLine size={17} />
-                          </a>
-                        ) : (
-                          <button type="button" onClick={downloadFallback} aria-label={`ดาวน์โหลด ${item.title}`}>
-                            <ArrowDownToLine size={17} />
-                          </button>
-                        )}
-                        <button type="button" onClick={() => shareItem(item)} aria-label={`แชร์ ${item.title}`}>
-                          <Share2 size={17} />
+                      {item.downloadUrl ? (
+                        <a
+                          className="card-download-btn"
+                          href={item.downloadUrl}
+                          download
+                          aria-label={`ดาวน์โหลด ${item.title}`}
+                        >
+                          <ArrowDownToLine size={16} /> ดาวน์โหลด
+                        </a>
+                      ) : (
+                        <button
+                          className="card-download-btn"
+                          type="button"
+                          onClick={downloadFallback}
+                          aria-label={`ดาวน์โหลด ${item.title}`}
+                        >
+                          <ArrowDownToLine size={16} /> ดาวน์โหลด
                         </button>
-                      </div>
+                      )}
+                      <button
+                        className="card-share-btn"
+                        type="button"
+                        onClick={() => shareItem(item)}
+                        aria-label={`แชร์ ${item.title}`}
+                      >
+                        <Share2 size={16} />
+                      </button>
                     </div>
                   </div>
                 </article>
@@ -830,14 +996,30 @@ export function MediaGallery() {
 
       <section className="trust-section" id="about">
         <div className="container trust-grid">
-          <div>
-            <span className="section-kicker">สื่อสารอย่างรับผิดชอบ</span>
+          <div className="trust-copy">
+            <span className="section-kicker">OUR VALUE</span>
             <h2>ข้อมูลที่ชัดเจน<br />ช่วยให้ชุมชนตัดสินใจได้ดีขึ้น</h2>
+            <p>
+              ร่วมสร้างสังคมสุขภาพดี ด้วยสื่อสารความเสี่ยงที่ถูกต้อง เชื่อถือได้
+              เพื่อคนสตูลและอนาคตที่ปลอดภัยกว่าเดิม
+            </p>
           </div>
           <div className="trust-points">
-            <div><ShieldCheck size={22} /><span><strong>ตรวจสอบได้</strong><small>เผยแพร่จากหน่วยงานสาธารณสุขจังหวัด</small></span></div>
-            <div><Share2 size={22} /><span><strong>พร้อมกระจายต่อ</strong><small>ดาวน์โหลดและแชร์ไปยังชุมชนได้ง่าย</small></span></div>
-            <div><MapPin size={22} /><span><strong>ตรงบริบทพื้นที่</strong><small>ค้นหาตามเหตุการณ์และพื้นที่ในจังหวัดสตูล</small></span></div>
+            <div className="trust-point-card">
+              <span className="trust-icon-ring"><ShieldCheck size={24} /></span>
+              <strong>ถูกต้องและเชื่อถือได้</strong>
+              <small>ผ่านการตรวจสอบจากสำนักงานสาธารณสุขจังหวัดสตูล</small>
+            </div>
+            <div className="trust-point-card">
+              <span className="trust-icon-ring"><Share2 size={24} /></span>
+              <strong>นำไปใช้และแชร์ได้ง่าย</strong>
+              <small>หลากหลายรูปแบบสื่อ พร้อมดาวน์โหลดทันที</small>
+            </div>
+            <div className="trust-point-card">
+              <span className="trust-icon-ring"><MapPin size={24} /></span>
+              <strong>ตอบโจทย์พื้นที่</strong>
+              <small>เนื้อหาที่เหมาะสมกับบริบทของจังหวัดสตูล</small>
+            </div>
           </div>
         </div>
       </section>
@@ -850,9 +1032,18 @@ export function MediaGallery() {
             </span>
             <div><strong>คลังสื่อสารความเสี่ยง</strong><small>สำนักงานสาธารณสุขจังหวัดสตูล</small></div>
           </div>
-          <div className="footer-credit">
-            <p>จัดทำโดย นายอรรฆพร ศรีปานรอด นักวิชาการคอมพิวเตอร์ปฏิบัติการ</p>
-            <p>กลุ่มงานสุขภาพดิจิทัล สำนักงานสาธารณสุขจังหวัดสตูล</p>
+          <div className="footer-center">
+            <nav className="footer-nav" aria-label="ลิงก์ส่วนท้าย">
+              <a href="#top">หน้าแรก</a>
+              <a href="#phases">ข้อมูลสถานการณ์</a>
+              <a href="#gallery">คลังสื่อ</a>
+              <a href="#about">เกี่ยวกับเรา</a>
+              <a href="/developers">API สำหรับนักพัฒนา <Braces size={14} /></a>
+              <a href="/admin">เข้าสู่ระบบผู้ดูแล <ArrowRight size={14} /></a>
+            </nav>
+            <div className="footer-credit">
+              <p>จัดทำโดย นายอรรฆพร ศรีปานรอด นักวิชาการคอมพิวเตอร์ปฏิบัติการ • กลุ่มงานสุขภาพดิจิทัล สำนักงานสาธารณสุขจังหวัดสตูล</p>
+            </div>
           </div>
           <div className="footer-actions">
             <span className="visitor-counter" title="นับหนึ่งครั้งต่อการเข้าใช้งานในแต่ละรอบ">
@@ -866,8 +1057,10 @@ export function MediaGallery() {
                 </>
               )}
             </span>
-            <a href="/developers">API สำหรับนักพัฒนา <Braces size={15} /></a>
-            <a href="/admin">เข้าสู่ระบบผู้ดูแล <ArrowRight size={15} /></a>
+            <div className="footer-social" aria-hidden="true">
+              <span><Globe size={16} /></span>
+              <span><HeartPulse size={16} /></span>
+            </div>
           </div>
         </div>
       </footer>
