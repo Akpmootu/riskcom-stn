@@ -246,7 +246,14 @@ function uploadMedia_(payload) {
   const bytes = Utilities.base64Decode(String(filePayload.base64 || ""));
   const blob = Utilities.newBlob(bytes, String(filePayload.type || "application/octet-stream"), String(filePayload.name || "upload"));
   const file = folder.createFile(blob);
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (_) {
+    Utilities.sleep(800);
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (_) {}
+  }
 
   const now = new Date().toISOString();
   const id = Utilities.getUuid();

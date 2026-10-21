@@ -159,6 +159,68 @@ async function createCompressedImageDataUrl(file: File, maxDimension = 1280): Pr
   });
 }
 
+async function optimizeImageFileForDrive(file: File, maxDimension = 1800): Promise<File> {
+  if (!file.type.startsWith("image/")) return file;
+  if (file.type !== "image/png" && file.size <= 450 * 1024) return file;
+
+  return new Promise((resolve) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const scale = Math.min(1, maxDimension / Math.max(img.width || 1, img.height || 1));
+      const width = Math.max(1, Math.round(img.width * scale));
+      const height = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(file);
+        return;
+      }
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => {
+          if (!blob || (file.type !== "image/png" && blob.size >= file.size)) {
+            resolve(file);
+            return;
+          }
+          const baseName = file.name.replace(/\.[^/.]+$/, "") || "media-image";
+          resolve(
+            new File([blob], `${baseName}.jpg`, {
+              type: "image/jpeg",
+              lastModified: Date.now(),
+            }),
+          );
+        },
+        "image/jpeg",
+        0.86,
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(file);
+    };
+    img.src = objectUrl;
+  });
+}
+
+function formatFriendlyUploadError(rawError: unknown): string {
+  const message = rawError instanceof Error ? rawError.message : String(rawError || "");
+  if (
+    message.toLowerCase().includes("service drive timed out") ||
+    message.toLowerCase().includes("timed out")
+  ) {
+    return "ระบบ Google Drive ใช้เวลาตอบสนองนานเกินกำหนดชั่วคราว กรุณากดปุ่ม 'บันทึกและเผยแพร่สื่อ' อีกครั้ง (ระบบได้ปรับขนาดไฟล์ให้เหมาะสมแล้ว)";
+  }
+  return message || "บันทึกสื่อไม่สำเร็จ";
+}
+
 function formatThaiDateTime(value: string) {
   if (!value) return "ไม่ระบุเวลา";
   const date = new Date(value);
@@ -676,9 +738,10 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   }
 
   async function uploadSingleAttachment(targetFile: File, meta: { phase: string; category: string; eventDate: string; location: string }): Promise<MediaSlide> {
+    const optimizedFile = await optimizeImageFileForDrive(targetFile);
     const attachmentForm = new FormData();
     attachmentForm.set("mode", "attachment");
-    attachmentForm.set("file", targetFile);
+    attachmentForm.set("file", optimizedFile);
     attachmentForm.set("phase", meta.phase);
     attachmentForm.set("category", meta.category);
     attachmentForm.set("eventDate", meta.eventDate);
@@ -710,7 +773,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       const extraSlides: MediaSlide[] = [];
       if (totalCount > 1) {
         for (let idx = 1; idx < totalCount; idx += 1) {
-          setUploadProgressText(`กำลังอัปโหลดรูปภาพที่ ${idx + 1} จาก ${totalCount}...`);
+          setUploadProgressText(`กำลังปรับแต่งและอัปโหลดรูปภาพที่ ${idx + 1} จาก ${totalCount}...`);
           const slide = await uploadSingleAttachment(uploadFiles[idx].file, {
             phase: uploadPhase,
             category: uploadCategory,
@@ -724,11 +787,12 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       setUploadProgressText(
         totalCount > 1
           ? `กำลังบันทึกภาพปกและรวมชุดสื่อ (${totalCount} รูปภาพ)...`
-          : "กำลังบันทึกลง Google...",
+          : "กำลังปรับแต่งรูปภาพและบันทึกลง Google Drive...",
       );
 
+      const optimizedPrimaryFile = await optimizeImageFileForDrive(uploadFiles[0].file);
       const data = new FormData();
-      data.set("file", uploadFiles[0].file);
+      data.set("file", optimizedPrimaryFile);
       if (extraSlides.length > 0) {
         data.set("extraSlides", JSON.stringify(extraSlides));
       }
@@ -764,7 +828,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     } catch (error) {
       setFormMessage({
         type: "error",
-        text: error instanceof Error ? error.message : "บันทึกสื่อไม่สำเร็จ",
+        text: formatFriendlyUploadError(error),
       });
     } finally {
       setUploading(false);
