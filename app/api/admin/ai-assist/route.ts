@@ -17,7 +17,16 @@ const DEFAULT_CATEGORIES = [
   "อื่นๆ",
 ];
 
-type AiSuggestion = {
+export type CaptionOption = {
+  id: string;
+  name: string;
+  hook: string;
+  title: string;
+  caption: string;
+  hashtags: string[];
+};
+
+export type AiSuggestion = {
   title: string;
   phase: IncidentPhase;
   category: string;
@@ -27,6 +36,7 @@ type AiSuggestion = {
   keywords: string[];
   location: string;
   extractedText?: string;
+  captionOptions?: CaptionOption[];
 };
 
 function extractJsonObject(raw: string): Record<string, unknown> | null {
@@ -57,103 +67,200 @@ function normalizePhase(value: unknown): IncidentPhase {
   return "before";
 }
 
+function normalizeCaptionOptions(
+  raw: unknown,
+  fallbackTitle: string,
+  fallbackDesc: string,
+  fallbackKeywords: string[],
+): CaptionOption[] {
+  if (Array.isArray(raw) && raw.length >= 3) {
+    return raw.slice(0, 3).map((item, idx) => {
+      const rec = (item || {}) as Record<string, unknown>;
+      return {
+        id: String(rec.id || idx + 1),
+        name: String(rec.name || `สไตล์ที่ ${idx + 1}`),
+        hook: String(rec.hook || ""),
+        title: String(rec.title || fallbackTitle),
+        caption: String(rec.caption || fallbackDesc).trim(),
+        hashtags: Array.isArray(rec.hashtags)
+          ? rec.hashtags.map((h) => String(h).trim()).filter(Boolean)
+          : fallbackKeywords,
+      };
+    });
+  }
+
+  return [
+    {
+      id: "1",
+      name: "สไตล์ 1: สั้น กระตุกสายตา (Hook & Punchy)",
+      hook: "⚡ ด่วน! เช็กก่อนสาย รู้ทันป้องกันทันที",
+      title: fallbackTitle,
+      caption: fallbackDesc,
+      hashtags: fallbackKeywords,
+    },
+    {
+      id: "2",
+      name: "สไตล์ 2: ห่วงใย ใส่ใจ เตือนภัย (Caring & Actionable)",
+      hook: "🛡️ ด้วยความห่วงใยจาก สสจ.สตูล ปฏิบัติตามนี้ปลอดภัยแน่นอน",
+      title: fallbackTitle,
+      caption: fallbackDesc,
+      hashtags: fallbackKeywords,
+    },
+    {
+      id: "3",
+      name: "สไตล์ 3: ทันสมัย ชวนแชร์ ภาษาคนรุ่นใหม่ (Trendy & Engaging)",
+      hook: "💡 ข้อมูลสุขภาพดีๆ เซฟไว้แล้วแชร์ต่อให้คนที่รัก",
+      title: fallbackTitle,
+      caption: fallbackDesc,
+      hashtags: fallbackKeywords,
+    },
+  ];
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
       imageDataUrl?: string;
+      imageUrl?: string;
       fileName?: string;
+      currentTitle?: string;
+      currentDescription?: string;
       categories?: string[];
+      mode?: string;
     };
 
     const imageDataUrl = String(body.imageDataUrl || "").trim();
+    const imageUrl = String(body.imageUrl || "").trim();
     const fileName = String(body.fileName || "").trim();
+    const currentTitle = String(body.currentTitle || "").trim();
+    const currentDescription = String(body.currentDescription || "").trim();
+
     const availableCategories =
       Array.isArray(body.categories) && body.categories.length > 0
         ? body.categories
         : DEFAULT_CATEGORIES;
 
-    if (!imageDataUrl && !fileName) {
+    if (!imageDataUrl && !imageUrl && !fileName && !currentTitle) {
       return json(
-        { ok: false, error: "กรุณาแนบไฟล์รูปภาพเพื่อวิเคราะห์ข้อมูล" },
+        { ok: false, error: "กรุณาระบุข้อมูลรูปภาพหรือหัวข้อสื่อเพื่อวิเคราะห์ข้อมูล" },
         { status: 400 },
       );
     }
 
     let extractedText = "";
 
-    // Step 1: Extract text and visual context from the image using Typhoon OCR
-    if (imageDataUrl.startsWith("data:image/")) {
-      const ocrResponse = await fetch(TYPHOON_API_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${TYPHOON_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "typhoon-ocr",
-          messages: [
-            {
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text: "อ่านข้อความภาษาไทยและภาษาอังกฤษทั้งหมดในภาพอินโฟกราฟิก/โปสเตอร์นี้อย่างละเอียด พร้อมอธิบายองค์ประกอบภาพและใจความสำคัญ",
-                },
-                {
-                  type: "image_url",
-                  image_url: { url: imageDataUrl },
-                },
-              ],
-            },
-          ],
-          max_tokens: 1024,
-          temperature: 0.1,
-        }),
-      });
+    // Step 1: Extract text and visual context from image using Typhoon OCR
+    const targetImageForOcr =
+      imageDataUrl && imageDataUrl.startsWith("data:image/")
+        ? imageDataUrl
+        : imageUrl && (imageUrl.startsWith("http") || imageUrl.startsWith("data:image/"))
+          ? imageUrl
+          : "";
 
-      if (ocrResponse.ok) {
-        const ocrData = (await ocrResponse.json()) as {
-          choices?: Array<{ message?: { content?: string } }>;
-        };
-        extractedText = String(ocrData.choices?.[0]?.message?.content || "").trim();
+    if (targetImageForOcr) {
+      try {
+        const ocrResponse = await fetch(TYPHOON_API_URL, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${TYPHOON_API_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: "typhoon-ocr",
+            messages: [
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: "อ่านข้อความภาษาไทยและภาษาอังกฤษทั้งหมดในภาพอินโฟกราฟิก/โปสเตอร์นี้อย่างละเอียด พร้อมอธิบายองค์ประกอบภาพและใจความสำคัญ",
+                  },
+                  {
+                    type: "image_url",
+                    image_url: { url: targetImageForOcr },
+                  },
+                ],
+              },
+            ],
+            max_tokens: 1024,
+            temperature: 0.1,
+          }),
+        });
+
+        if (ocrResponse.ok) {
+          const ocrData = (await ocrResponse.json()) as {
+            choices?: Array<{ message?: { content?: string } }>;
+          };
+          extractedText = String(ocrData.choices?.[0]?.message?.content || "").trim();
+        }
+      } catch {
+        // Fallback gracefully without throwing
       }
     }
 
-    // Step 2: Structure metadata into Risk Communication fields using Typhoon Instruct
-    const prompt = `คุณคือครีเอเตอร์และผู้เชี่ยวชาญด้านการสื่อสารความเสี่ยงทางสุขภาพและสาธารณภัยยุคใหม่ ของสำนักงานสาธารณสุขจังหวัดสตูล
-จากข้อมูลที่อ่านได้จากภาพสื่ออินโฟกราฟิก/โปสเตอร์ต่อไปนี้:
-ชื่อไฟล์: ${fileName || "ไม่ระบุ"}
-ข้อความและรายละเอียดจากภาพ:
+    // Step 2: Content Marketing & Copywriter Specialist Instruction
+    const prompt = `คุณคือผู้เชี่ยวชาญด้าน Content Marketing และ Copywriter มืออาชีพที่เชี่ยวชาญการเขียนแคปชั่นบน Social Media (เช่น Facebook, Line OA, Twitter/X, TikTok) ให้กับสำนักงานสาธารณสุขจังหวัดสตูล
+
+Task: ช่วยวิเคราะห์ภาพและเขียนแคปชั่นสำหรับโพสต์สื่อสารความเสี่ยงและประชาสัมพันธ์ด้านสุขภาพ
+ข้อมูลภาพและเนื้อหาประกอบ:
+- ชื่อสื่อ/หัวข้อเดิม: ${currentTitle || "ไม่ระบุ"}
+- เนื้อหาเดิม: ${currentDescription || "ไม่ระบุ"}
+- รายละเอียดและข้อความที่อ่านได้จากภาพ:
 """
-${extractedText || fileName}
+${extractedText || currentTitle || fileName || "ไม่มีข้อความเพิ่มเติม"}
 """
+- หมวดหมู่เหตุการณ์ในระบบ: ${availableCategories.join(", ")}
 
-รายการประเภทเหตุการณ์ที่มีในระบบ: ${availableCategories.join(", ")}
+Tone & Style:
+1. สั้น กระชับ ดึงดูด: ความยาวไม่เกิน 3-4 บรรทัด หรือ Bullet points สั้นกระชับ เน้นประโยคเปิด (Hook) ที่กระตุกสายตาให้คนหยุดอ่านทันที เนื้อหาเคลียร์ อ่านรอบเดียวเข้าใจทันที ไม่ต้องบรรยายยาวเป็นพารากราฟ
+2. ภาษามืออาชีพแต่ทันสมัย: ใช้ภาษาที่เป็นทางการ น่าเชื่อถือ แต่ผสมผสานคำสมัยใหม่ (Trendy words) หรือคำติดปาก เพื่อไม่ให้ดูน่าเบื่อ เข้าถึงวัยรุ่นและประชาชนได้จริง
+3. Formatting & Elements:
+   - Emoji: เลือกใช้อิโมจิที่ตรงกับเนื้อหา ตกแต่งให้สวยงาม สบายตา ช่วยแบ่งสัดส่วนเนื้อหาให้เปิดอ่านง่าย
+   - Bullet points: ใช้ • สรุปข้อความสำคัญอย่างเป็นระเบียบ
+   - การไฮไลต์: ใส่เครื่องหมาย **...** ล้อมรอบคำสำคัญที่ต้องการย้ำเตือน เช่น **ห้ามเดินลุยน้ำเท้าเปล่า**, **โทร 1669 ทันที**
+   - Hashtags: แฮชแท็กที่ตรงกับเนื้อหาโดยตรง ผสมผสานแฮชแท็กที่เป็นกระแส (Trending/High search) เช่น #สาธารณสุขสตูล, #เตือนภัยสุขภาพ, #สตูลปลอดภัย, #เช็กก่อนแชร์
 
-เป้าหมายสำคัญ: ประชาชนและคนรุ่นใหม่ต้องการอ่านแล้วเข้าใจทันทีใน 3 วินาที ไม่ต้องบรรยายยาวเยิ่นเย้อ!
-กรุณาวิเคราะห์และสร้างข้อมูลโดยปฏิบัติตามกฎนี้อย่างเคร่งครัด:
-1. ภาษา: กระชับ ทันสมัย เข้าใจง่ายทันที ชัดเจน น่าเชื่อถือ
-2. description:
-   - สรุปเป็น Bullet points (•) สั้นๆ ตรงประเด็น เพียง 2-4 ข้อเท่านั้น (ห้ามเขียนบรรยายยาวเป็นย่อหน้า)
-   - แต่ละข้อต้องขึ้นต้นด้วยอิโมจิที่ตรงกับประเด็น เช่น ⚠️ (จุดเสี่ยง/อาการ), 🛡️ (วิธีป้องกัน), 💡 (ข้อควรทำ), 📞 (สายด่วนฉุกเฉิน)
-   - **การไฮไลต์ข้อความสำคัญ**: ให้ใส่เครื่องหมาย **...** ล้อมรอบคำสำคัญที่ต้องการย้ำเตือนประชาชน เพื่อให้ระบบนำไปแสดงผลเป็นไฮไลต์สะดุดตา เช่น **ห้ามเดินลุยน้ำเท้าเปล่า**, **โทร 1669 ทันที**, **ล้างมือทันที**
-
-ตัวอย่าง description ที่ต้องการ:
-📌 **เรื่องด่วนต้องรู้**: ป้องกันโรคฉี่หนูช่วงน้ำท่วมขัง
-• ⚠️ **จุดเสี่ยง**: **ห้ามลุยน้ำเท้าเปล่า** ระวังเชื้อเข้าทางบาดแผล
-• 🛡️ **วิธีป้องกัน**: สวมรองเท้าบูท และรีบล้างสบู่ทันที
-• 📞 **สายด่วน**: หากมีไข้สูงหนาวสั่น โทร **1669 ฟรี 24 ชม.**
+Output: ขอผลลัพธ์ตัวเลือกแคปชั่นทั้งหมด 3 แบบที่สไตล์ต่างกัน เพื่อให้ผู้ใช้เลือกใช้แบบที่ดีที่สุด:
+1. สไตล์ที่ 1: "สั้น กระตุกสายตา (Hook & Punchy)" — เน้นเปิดด้วยประโยค Hook กระตุกสายตา สั้น กระชับ ฉับไวใน 3 วินาที
+2. สไตล์ที่ 2: "ห่วงใย ใส่ใจ เตือนภัย (Caring & Actionable)" — เน้นความห่วงใย ชี้จุดเสี่ยงและบอกวิธีป้องกันแบบทำตามได้ทันที
+3. สไตล์ที่ 3: "ทันสมัย ชวนแชร์ ภาษาคนรุ่นใหม่ (Trendy & Engaging)" — ภาษากระฉับกระเฉง ชวนกดเซฟและแชร์ต่อให้คนที่รัก
 
 ตอบกลับเป็น JSON เท่านั้น ตามโครงสร้างดังนี้:
 {
-  "title": "ชื่อสื่อสั้นกระชับ ดึงดูดใจ มีอิโมจิต้นประโยค 1 ตัว (ไม่เกิน 70 ตัวอักษร)",
+  "title": "ชื่อหัวข้อโพสต์หลักที่แนะนำ มีอิโมจิต้นประโยค (ไม่เกิน 70 ตัวอักษร)",
   "phase": "เลือกค่าเดียวจาก before หรือ during หรือ after",
-  "categories": ["เลือกประเภทเหตุการณ์ที่เกี่ยวข้อง 1-3 รายการจาก [${availableCategories.join(", ")}]"],
-  "category": "ประเภทเหตุการณ์หลัก 1 รายการจาก [${availableCategories.join(", ")}]",
-  "description": "สรุปสั้นกระชับ 2-4 ข้อ มีอิโมจิ เป็น Bullet points (\\n• ) พร้อมใส่ **คำสำคัญที่ต้องการไฮไลต์**",
-  "altText": "คำบรรยายภาพสั้นๆ 1 ประโยค",
-  "keywords": ["คำค้นหา 4-6 คำ"],
-  "location": "ชื่อพื้นที่หากปรากฏในภาพ มิฉะนั้นใช้คำว่า จังหวัดสตูล"
+  "categories": ["หมวดหมู่ที่เกี่ยวข้อง 1-3 รายการจาก [${availableCategories.join(", ")}]"],
+  "category": "หมวดหมู่หลัก 1 รายการ",
+  "description": "แคปชั่นหลักแบบ Bullet points (\\n• ) พร้อมอิโมจิและ **คำไฮไลต์**",
+  "altText": "คำบรรยายภาพสั้นๆ 1 ประโยคเพื่อการเข้าถึง",
+  "keywords": ["คำค้นหาและแฮชแท็ก 4-6 คำ"],
+  "location": "ชื่อพื้นที่ เช่น จังหวัดสตูล",
+  "captionOptions": [
+    {
+      "id": "1",
+      "name": "สไตล์ 1: สั้น กระตุกสายตา (Hook & Punchy)",
+      "hook": "ประโยคเปิดสั้นกระตุกสายตา",
+      "title": "ชื่อหัวข้อแบบที่ 1",
+      "caption": "แคปชั่นแบบที่ 1 สั้น กระชับ มี bullet points อิโมจิ และ **คำไฮไลต์**",
+      "hashtags": ["#แฮชแท็ก1", "#แฮชแท็ก2", "#แฮชแท็ก3"]
+    },
+    {
+      "id": "2",
+      "name": "สไตล์ 2: ห่วงใย ใส่ใจ เตือนภัย (Caring & Actionable)",
+      "hook": "ประโยคเปิดแบบห่วงใย",
+      "title": "ชื่อหัวข้อแบบที่ 2",
+      "caption": "แคปชั่นแบบที่ 2 สั้น กระชับ มี bullet points อิโมจิ และ **คำไฮไลต์**",
+      "hashtags": ["#แฮชแท็ก1", "#แฮชแท็ก2", "#แฮชแท็ก3"]
+    },
+    {
+      "id": "3",
+      "name": "สไตล์ 3: ทันสมัย ชวนแชร์ ภาษาคนรุ่นใหม่ (Trendy & Engaging)",
+      "hook": "ประโยคเปิดสไตล์ทันสมัย",
+      "title": "ชื่อหัวข้อแบบที่ 3",
+      "caption": "แคปชั่นแบบที่ 3 สั้น กระชับ มี bullet points อิโมจิ และ **คำไฮไลต์**",
+      "hashtags": ["#แฮชแท็ก1", "#แฮชแท็ก2", "#แฮชแท็ก3"]
+    }
+  ]
 }`;
 
     const instructResponse = await fetch(TYPHOON_API_URL, {
@@ -168,15 +275,15 @@ ${extractedText || fileName}
           {
             role: "system",
             content:
-              "คุณเป็นผู้ช่วย AI สื่อสารความเสี่ยงยุคใหม่ของสำนักงานสาธารณสุขจังหวัดสตูล เชี่ยวชาญการสรุปข้อมูลสุขภาพให้เข้าใจง่าย ทันสมัย เข้าถึงวัยรุ่นปนทางการ มีอิโมจิ และจัดรูปแบบเป็น Bullet points ตอบกลับเป็น JSON ที่ถูกต้องตามโครงสร้างที่กำหนดเท่านั้น",
+              "คุณคือ Content Marketing และ Copywriter มืออาชีพของสำนักงานสาธารณสุขจังหวัดสตูล เชี่ยวชาญการเขียนแคปชั่นบน Social Media สั้น กระชับ ดึงดูดสายตา มีอิโมจิ Bullet points และตัวเลือกแคปชั่น 3 สไตล์ ตอบกลับเป็น JSON ที่ถูกต้องตามโครงสร้างที่กำหนดเท่านั้น",
           },
           {
             role: "user",
             content: prompt,
           },
         ],
-        max_tokens: 1100,
-        temperature: 0.3,
+        max_tokens: 1500,
+        temperature: 0.35,
       }),
     });
 
@@ -259,6 +366,13 @@ ${extractedText || fileName}
       .replace(/([^\n])\s+(•\s)/g, "$1\n$2")
       .trim();
 
+    const captionOptions = normalizeCaptionOptions(
+      parsed.captionOptions,
+      String(parsed.title || fileName || "ประกาศแจ้งเตือนสุขภาพ"),
+      formattedDescription,
+      rawKeywords,
+    );
+
     const suggestion: AiSuggestion = {
       title: String(parsed.title || "").trim() || fileName.replace(/\.[^.]+$/, ""),
       phase: normalizePhase(parsed.phase),
@@ -269,6 +383,7 @@ ${extractedText || fileName}
       keywords: rawKeywords,
       location: String(parsed.location || "จังหวัดสตูล").trim() || "จังหวัดสตูล",
       extractedText,
+      captionOptions,
     };
 
     return json({ ok: true, suggestion });

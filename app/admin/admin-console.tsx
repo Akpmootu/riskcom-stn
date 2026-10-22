@@ -97,6 +97,15 @@ import type {
 } from "../types";
 import { AdminDashboardSkeleton } from "./admin-skeleton";
 
+type CaptionOption = {
+  id: string;
+  name: string;
+  hook: string;
+  title: string;
+  caption: string;
+  hashtags: string[];
+};
+
 type QueuedUploadFile = {
   id: string;
   file: File;
@@ -379,6 +388,19 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [formMessage, setFormMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState<MediaItem | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editAltText, setEditAltText] = useState("");
+  const [editKeywords, setEditKeywords] = useState("");
+  const [editLocation, setEditLocation] = useState("");
+  const [editPhase, setEditPhase] = useState<IncidentPhase>("before");
+  const [editCaptionOptions, setEditCaptionOptions] = useState<CaptionOption[]>([]);
+  const [selectedCaptionIdx, setSelectedCaptionIdx] = useState<number | null>(null);
+  const [reanalyzingEdit, setReanalyzingEdit] = useState(false);
+  const [editAiMessage, setEditAiMessage] = useState<{
+    type: "info" | "success" | "error";
+    text: string;
+  } | null>(null);
   const [editCategories, setEditCategories] = useState<string[]>(["น้ำท่วม"]);
   const [editExtraSlides, setEditExtraSlides] = useState<MediaSlide[]>([]);
   const [editNewFiles, setEditNewFiles] = useState<QueuedUploadFile[]>([]);
@@ -489,27 +511,36 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     if (!el) return;
     const start = el.selectionStart;
     const end = el.selectionEnd;
-    const current = el.value;
+    const current = editDescription;
     if (start !== end) {
       const selectedText = current.substring(start, end);
-      el.value = current.substring(0, start) + `**${selectedText}**` + current.substring(end);
-      el.focus();
-      el.setSelectionRange(start, end + 4);
+      const replaced = current.substring(0, start) + `**${selectedText}**` + current.substring(end);
+      setEditDescription(replaced);
+      setTimeout(() => {
+        el.focus();
+        el.setSelectionRange(start, end + 4);
+      }, 0);
     } else {
-      el.value = current ? current + " **ข้อความสำคัญ**" : "**ข้อความสำคัญ**";
-      el.focus();
+      const inserted = current ? current + " **ข้อความสำคัญ**" : "**ข้อความสำคัญ**";
+      setEditDescription(inserted);
     }
   };
 
   const insertSnippetToEditDesc = (snippet: string) => {
     const el = editDescRef.current;
-    if (!el) return;
+    if (!el) {
+      setEditDescription((prev) => (prev ? prev + snippet : snippet.trim()));
+      return;
+    }
     const start = el.selectionStart;
     const end = el.selectionEnd;
-    const current = el.value;
-    el.value = current.substring(0, start) + snippet + current.substring(end);
-    el.focus();
-    el.setSelectionRange(start + snippet.length, start + snippet.length);
+    const current = editDescription;
+    const replaced = current.substring(0, start) + snippet + current.substring(end);
+    setEditDescription(replaced);
+    setTimeout(() => {
+      el.focus();
+      el.setSelectionRange(start + snippet.length, start + snippet.length);
+    }, 0);
   };
 
   // Load watch situation config
@@ -1332,6 +1363,15 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       if (oldFile.previewUrl) URL.revokeObjectURL(oldFile.previewUrl);
     }
     setEditNewFiles([]);
+    setEditTitle(item.title);
+    setEditDescription(item.description);
+    setEditAltText(item.altText || "");
+    setEditKeywords(item.keywords.join(", "));
+    setEditLocation(item.location || "สตูล");
+    setEditPhase(item.phase || "before");
+    setEditCaptionOptions([]);
+    setSelectedCaptionIdx(null);
+    setEditAiMessage(null);
     setEditing(item);
   }
 
@@ -1341,8 +1381,88 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     }
     setEditNewFiles([]);
     setEditExtraSlides([]);
+    setEditCaptionOptions([]);
+    setSelectedCaptionIdx(null);
+    setEditAiMessage(null);
     setEditing(null);
   }
+
+  const handleReanalyzeEditMedia = async () => {
+    if (!editing) return;
+    setReanalyzingEdit(true);
+    setEditAiMessage({
+      type: "info",
+      text: "AI Content Marketing กำลังวิเคราะห์รูปภาพและคิดแคปชั่น 3 สไตล์ กรุณารอสักครู่...",
+    });
+
+    try {
+      let imageDataUrl = "";
+      if (editNewFiles.length > 0 && editNewFiles[0].file.type.startsWith("image/")) {
+        imageDataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(String(reader.result || ""));
+          reader.readAsDataURL(editNewFiles[0].file);
+        });
+      }
+
+      const res = await fetch("/api/admin/ai-assist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          imageDataUrl: imageDataUrl || undefined,
+          imageUrl: !imageDataUrl ? (editing.thumbnailUrl || editing.downloadUrl) : undefined,
+          fileName: editing.fileName,
+          currentTitle: editTitle || editing.title,
+          currentDescription: editDescription || editing.description,
+          categories: editCategories,
+          mode: "caption3styles",
+        }),
+      });
+
+      const data = await res.json();
+      if (data.ok && data.suggestion) {
+        const s = data.suggestion;
+        if (s.captionOptions && Array.isArray(s.captionOptions) && s.captionOptions.length > 0) {
+          setEditCaptionOptions(s.captionOptions);
+          applyCaptionOption(s.captionOptions[0], 0);
+          setEditAiMessage({
+            type: "success",
+            text: "AI สร้างแคปชั่น 3 สไตล์เรียบร้อยแล้ว! เลือกสไตล์ที่ต้องการด้านล่างได้ทันที",
+          });
+        } else {
+          if (s.title) setEditTitle(s.title);
+          if (s.description) setEditDescription(s.description);
+          if (s.keywords && s.keywords.length > 0) setEditKeywords(s.keywords.join(", "));
+          if (s.altText) setEditAltText(s.altText);
+          setEditAiMessage({
+            type: "success",
+            text: "AI ทบทวนข้อมูลและปรับปรุงแคปชั่นเรียบร้อยแล้ว",
+          });
+        }
+      } else {
+        setEditAiMessage({
+          type: "error",
+          text: data.error || "ไม่สามารถวิเคราะห์รูปภาพด้วย AI ได้",
+        });
+      }
+    } catch {
+      setEditAiMessage({
+        type: "error",
+        text: "ไม่สามารถเชื่อมต่อระบบ AI ได้ กรุณาลองใหม่อีกครั้ง",
+      });
+    } finally {
+      setReanalyzingEdit(false);
+    }
+  };
+
+  const applyCaptionOption = (opt: CaptionOption, idx: number) => {
+    setSelectedCaptionIdx(idx);
+    if (opt.title) setEditTitle(opt.title);
+    if (opt.caption) setEditDescription(opt.caption);
+    if (opt.hashtags && opt.hashtags.length > 0) {
+      setEditKeywords(opt.hashtags.join(", "));
+    }
+  };
 
   function addEditFiles(incoming: FileList | File[] | null) {
     const rawList = incoming ? Array.from(incoming).filter((entry) => entry && entry.size > 0) : [];
@@ -3509,7 +3629,96 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                     </div>
                   )}
 
-                  <div className="form-grid">
+                  {/* AI Re-analyze & 3-Style Caption Box */}
+              <div className="ai-reanalyze-box">
+                <div className="ai-reanalyze-copy">
+                  <span className="ai-reanalyze-badge">
+                    <Sparkles size={14} /> AI Social Media Copywriter
+                  </span>
+                  <strong>ทบทวนรูปภาพ & สร้างแคปชั่นใหม่ด้วย AI</strong>
+                  <p>
+                    ให้ AI ช่วยวิเคราะห์ภาพและเขียนแคปชั่นประชาสัมพันธ์สไตล์ Content Marketing สำหรับ Facebook/Social Media สั้น กระชับ มี Hook กระตุกสายตา พร้อมอิโมจิและแฮชแท็ก (มี 3 สไตล์ให้เลือก)
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="ai-reanalyze-btn"
+                  disabled={reanalyzingEdit}
+                  onClick={handleReanalyzeEditMedia}
+                >
+                  {reanalyzingEdit ? <LoaderCircle className="spin" size={16} /> : <WandSparkles size={16} />}
+                  <span>{reanalyzingEdit ? "กำลังวิเคราะห์และคิดแคปชั่น..." : "ทบทวนรูปภาพด้วย AI"}</span>
+                </button>
+              </div>
+
+              {editAiMessage && (
+                <div className={`ai-assist-banner ${editAiMessage.type}`} role="status">
+                  {editAiMessage.type === "info" && <LoaderCircle className="spin" size={16} />}
+                  {editAiMessage.type === "success" && <Check size={16} />}
+                  {editAiMessage.type === "error" && <AlertTriangle size={16} />}
+                  <span>{editAiMessage.text}</span>
+                </div>
+              )}
+
+              {editCaptionOptions.length > 0 && (
+                <div className="ai-caption-picker-container">
+                  <div className="ai-caption-picker-header">
+                    <div className="caption-picker-title">
+                      <Sparkles size={16} style={{ color: "#d97706" }} />
+                      <strong>ตัวเลือกแคปชั่น 3 แบบจาก AI Copywriter (คลิกเพื่อเลือกใช้):</strong>
+                    </div>
+                    <span className="caption-picker-badge">3 สไตล์ให้เลือก</span>
+                  </div>
+
+                  <div className="ai-caption-cards-grid">
+                    {editCaptionOptions.map((opt, idx) => (
+                      <div
+                        key={opt.id || idx}
+                        className={`ai-caption-card ${selectedCaptionIdx === idx ? "is-selected" : ""}`}
+                        onClick={() => applyCaptionOption(opt, idx)}
+                      >
+                        <div className="caption-card-top">
+                          <span className="caption-card-badge">{opt.name}</span>
+                          {selectedCaptionIdx === idx ? (
+                            <span className="caption-applied-tag">
+                              <Check size={13} /> ใช้งานอยู่
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="caption-apply-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                applyCaptionOption(opt, idx);
+                              }}
+                            >
+                              เลือกใช้แบบนี้
+                            </button>
+                          )}
+                        </div>
+
+                        {opt.hook && <div className="caption-hook-text">"{opt.hook}"</div>}
+
+                        <div className="caption-body-preview">
+                          <FormattedDescription text={opt.caption} />
+                        </div>
+
+                        {opt.hashtags && opt.hashtags.length > 0 && (
+                          <div className="caption-hashtags-row">
+                            {opt.hashtags.map((h, i) => (
+                              <span key={i} className="caption-tag-pill">
+                                {h.startsWith("#") ? h : `#${h}`}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="form-grid">
                     <label className="field-wide">
                       <span className="fa-form-heading">
                         <span className="fa-field-badge"><i className="fa-solid fa-heading" aria-hidden="true" /></span>
@@ -3934,14 +4143,14 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                     <span className="fa-field-badge"><i className="fa-solid fa-heading" aria-hidden="true" /></span>
                     <span>ชื่อสื่อ <em>*</em></span>
                   </span>
-                  <input name="title" required defaultValue={editing.title} />
+                  <input name="title" required value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
                 </label>
                 <label>
                   <span className="fa-form-heading">
                     <span className="fa-field-badge"><i className="fa-solid fa-timeline" aria-hidden="true" /></span>
                     <span>ช่วงเหตุการณ์ <em>*</em></span>
                   </span>
-                  <select name="phase" defaultValue={editing.phase}>
+                  <select name="phase" value={editPhase} onChange={(e) => setEditPhase(e.target.value as IncidentPhase)}>
                     <option value="before">ก่อนเกิดเหตุ</option>
                     <option value="during">ระหว่างเกิดเหตุ</option>
                     <option value="after">หลังเกิดเหตุ</option>
@@ -4095,7 +4304,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                     <span className="fa-field-badge"><i className="fa-solid fa-map-location-dot" aria-hidden="true" /></span>
                     <span>พื้นที่ <em>*</em></span>
                   </span>
-                  <input name="location" required defaultValue={editing.location} />
+                  <input name="location" required value={editLocation} onChange={(e) => setEditLocation(e.target.value)} />
                 </label>
                 <label>
                   <span className="fa-form-heading">
@@ -4153,21 +4362,21 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                       📞 สายด่วน 1669
                     </button>
                   </div>
-                  <textarea ref={editDescRef} name="description" rows={4} required defaultValue={editing.description} />
+                  <textarea ref={editDescRef} name="description" rows={4} required value={editDescription} onChange={(e) => setEditDescription(e.target.value)} />
                 </label>
                 <label className="field-wide">
                   <span className="fa-form-heading">
                     <span className="fa-field-badge"><i className="fa-solid fa-universal-access" aria-hidden="true" /></span>
                     <span>คำบรรยายภาพเพื่อการเข้าถึง <em>*</em></span>
                   </span>
-                  <input name="altText" required defaultValue={editing.altText} />
+                  <input name="altText" required value={editAltText} onChange={(e) => setEditAltText(e.target.value)} />
                 </label>
                 <label className="field-wide">
                   <span className="fa-form-heading">
                     <span className="fa-field-badge"><i className="fa-solid fa-hashtag" aria-hidden="true" /></span>
                     <span>คำค้นหา <span>(คั่นด้วยเครื่องหมายจุลภาค)</span></span>
                   </span>
-                  <input name="keywords" defaultValue={editing.keywords.join(", ")} />
+                  <input name="keywords" value={editKeywords} onChange={(e) => setEditKeywords(e.target.value)} />
                 </label>
               </div>
               <div className="admin-modal-actions">
