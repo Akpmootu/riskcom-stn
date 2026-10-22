@@ -132,6 +132,24 @@ function getVisualClass(category: string) {
   return "recovery";
 }
 
+function pickRandomInterestingMedia(allItems: MediaItem[], maxCount = 5): MediaItem[] {
+  if (allItems.length === 0) return [];
+  const withImages = allItems.filter((item) => Boolean(item.thumbnailUrl));
+  const pool = withImages.length >= Math.min(2, allItems.length) ? [...withImages] : [...allItems];
+  for (let i = pool.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const temp = pool[i];
+    pool[i] = pool[j];
+    pool[j] = temp;
+  }
+  const selected = pool.slice(0, maxCount);
+  if (selected.length < maxCount && allItems.length > selected.length) {
+    const remaining = allItems.filter((item) => !selected.some((s) => s.id === item.id));
+    selected.push(...remaining.slice(0, maxCount - selected.length));
+  }
+  return selected;
+}
+
 function getMediaTypeLabel(item: MediaItem) {
   const slides = getMediaSlides(item);
   if (slides.length > 1) return `ชุดสื่อ ${slides.length} ภาพ`;
@@ -377,6 +395,7 @@ export function MediaGallery() {
   const [refreshing, setRefreshing] = useState(false);
   const [cacheSavedAt, setCacheSavedAt] = useState<number | null>(null);
   const [showingCachedData, setShowingCachedData] = useState(false);
+  const [featuredList, setFeaturedList] = useState<MediaItem[]>([]);
   const [featuredIndex, setFeaturedIndex] = useState(0);
   const [tagConfigs, setTagConfigs] = useState<CategoryTagConfig[]>([]);
   const touchStartX = useRef<number | null>(null);
@@ -590,9 +609,40 @@ export function MediaGallery() {
     });
   }, [category, items, phase, query]);
 
-  const featuredList = useMemo(() => items.slice(0, 4), [items]);
+  useEffect(() => {
+    if (items.length === 0) {
+      setFeaturedList([]);
+      return;
+    }
+    setFeaturedList(pickRandomInterestingMedia(items, 5));
+    setFeaturedIndex(0);
+  }, [items]);
+
+  useEffect(() => {
+    if (featuredList.length <= 1 || selected) return;
+    const timer = window.setInterval(() => {
+      setFeaturedIndex((idx) => (idx + 1) % featuredList.length);
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [featuredList.length, selected]);
+
+  function shuffleFeaturedNews() {
+    if (items.length <= 1) return;
+    const nextList = pickRandomInterestingMedia(items, 5);
+    if (nextList.length > 1 && featured && nextList[0]?.id === featured.id) {
+      const first = nextList.shift();
+      if (first) nextList.push(first);
+    }
+    setFeaturedList(nextList);
+    setFeaturedIndex(0);
+  }
+
   const safeFeaturedIndex = featuredList.length ? featuredIndex % featuredList.length : 0;
   const featured = featuredList[safeFeaturedIndex] ?? items[0];
+  const featuredSlides = useMemo(
+    () => (featured ? getMediaSlides(featured) : []),
+    [featured],
+  );
 
   async function refreshMedia() {
     if (refreshing) return;
@@ -754,18 +804,84 @@ export function MediaGallery() {
                   <span className="live-dot" />
                   <span>ประกาศเพื่อประชาชน</span>
                 </span>
-                <small>อัปเดตล่าสุด {featured ? formatThaiDate(featured.eventDate) : "วันนี้"}</small>
+                <div className="alert-head-meta">
+                  <small>อัปเดตล่าสุด {featured ? formatThaiDate(featured.eventDate) : "วันนี้"}</small>
+                  {items.length > 1 && (
+                    <button
+                      type="button"
+                      className="alert-shuffle-btn"
+                      onClick={shuffleFeaturedNews}
+                      title="สุ่มข่าวที่น่าสนใจเรื่องอื่น"
+                      aria-label="สุ่มข่าวที่น่าสนใจเรื่องอื่น"
+                    >
+                      <RefreshCw size={13} /> สุ่มข่าว
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="alert-card-body">
-                <div className="alert-title-row">
-                  <div className="alert-icon">
-                    <CloudRain size={30} />
+                {featured && (
+                  <div
+                    className="alert-card-media"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      setSelected(featured);
+                      setSelectedSlideIndex(0);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setSelected(featured);
+                        setSelectedSlideIndex(0);
+                      }
+                    }}
+                    aria-label={`ดูรูปภาพ ${featured.title}`}
+                  >
+                    <MediaArtwork
+                      item={featured}
+                      slideUrl={featuredSlides[0]?.thumbnailUrl}
+                    />
+                    <span className={`phase-badge badge-${featured.phase}`}>
+                      {phaseLabels[featured.phase]}
+                    </span>
+                    {featuredSlides.length > 1 && (
+                      <span className="alert-media-slide-pill">
+                        <Images size={12} /> ชุดสื่อ {featuredSlides.length} ภาพ
+                      </span>
+                    )}
+                    <span className="alert-media-overlay">
+                      <Eye size={16} /> คลิกเพื่อดูภาพขยาย
+                    </span>
                   </div>
-                  <div>
-                    <span className="alert-kicker">{featured?.category ?? "เฝ้าระวังสุขภาพ"}</span>
-                    <h2>{featured?.title ?? "เฝ้าระวังเหตุการณ์ในจังหวัดสตูล"}</h2>
+                )}
+
+                <div className="alert-title-block">
+                  <div className="alert-card-tags">
+                    {featured ? (
+                      getItemCategories(featured).map((catName) => {
+                        const cfg = resolveTagConfig(catName, tagConfigs);
+                        return (
+                          <span
+                            key={catName}
+                            className="alert-tag-pill"
+                            style={{
+                              backgroundColor: cfg.bgColor,
+                              color: cfg.textColor,
+                              borderColor: cfg.borderColor,
+                            }}
+                          >
+                            <i className={cfg.icon} aria-hidden="true" />
+                            {catName}
+                          </span>
+                        );
+                      })
+                    ) : (
+                      <span className="alert-kicker">เฝ้าระวังสุขภาพ</span>
+                    )}
                   </div>
+                  <h2>{featured?.title ?? "เฝ้าระวังเหตุการณ์ในจังหวัดสตูล"}</h2>
                 </div>
 
                 <p className="alert-description">
@@ -782,7 +898,12 @@ export function MediaGallery() {
                   <button
                     type="button"
                     className="alert-cta-btn"
-                    onClick={() => featured && setSelected(featured)}
+                    onClick={() => {
+                      if (featured) {
+                        setSelected(featured);
+                        setSelectedSlideIndex(0);
+                      }
+                    }}
                   >
                     ดูข้อมูลเพิ่มเติม <ArrowRight size={16} />
                   </button>

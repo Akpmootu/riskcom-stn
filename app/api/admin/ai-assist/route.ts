@@ -120,7 +120,7 @@ export async function POST(request: Request) {
     }
 
     // Step 2: Structure metadata into Risk Communication fields using Typhoon Instruct
-    const prompt = `คุณคือผู้เชี่ยวชาญด้านการสื่อสารความเสี่ยงทางสุขภาพและสาธารณภัย ของสำนักงานสาธารณสุขจังหวัดสตูล
+    const prompt = `คุณคือครีเอเตอร์และผู้เชี่ยวชาญด้านการสื่อสารความเสี่ยงทางสุขภาพและสาธารณภัยยุคใหม่ ของสำนักงานสาธารณสุขจังหวัดสตูล
 จากข้อมูลที่อ่านได้จากภาพสื่ออินโฟกราฟิก/โปสเตอร์ต่อไปนี้:
 ชื่อไฟล์: ${fileName || "ไม่ระบุ"}
 ข้อความและรายละเอียดจากภาพ:
@@ -130,13 +130,15 @@ ${extractedText || fileName}
 
 รายการประเภทเหตุการณ์ที่มีในระบบ: ${availableCategories.join(", ")}
 
-กรุณาวิเคราะห์และสร้างข้อมูลสำหรับลงทะเบียนสื่อความเสี่ยง โดยตอบกลับเป็น JSON เท่านั้น ตามโครงสร้างดังนี้:
+กรุณาวิเคราะห์และสร้างข้อมูลสำหรับลงทะเบียนสื่อความเสี่ยง โดยใช้ภาษาที่ **"เข้าถึงวัยรุ่นและคนรุ่นใหม่ได้ง่าย ปนทางการ (Semi-formal, ทันสมัย, กระชับ, น่าเชื่อถือ)"** พร้อมใส่อิโมจิ (Emoji) ที่เหมาะสม และสรุปเนื้อหาใน description เป็น **Bullet Points (•)** เพื่อให้อ่านง่ายและนำไปใช้ต่อได้ทันที
+
+ตอบกลับเป็น JSON เท่านั้น ตามโครงสร้างดังนี้:
 {
-  "title": "ชื่อสื่อที่กระชับ ชัดเจน เป็นทางการ (ไม่เกิน 90 ตัวอักษร)",
+  "title": "ชื่อสื่อที่ดึงดูดใจ ทันสมัย เข้าถึงวัยรุ่นได้ปนทางการ มีอิโมิต้นประโยค 1 ตัว กระชับชัดเจน (ไม่เกิน 90 ตัวอักษร)",
   "phase": "เลือกค่าเดียวจาก before หรือ during หรือ after (before = ก่อนเกิดเหตุ/การเตรียมพร้อม/การป้องกัน, during = ระหว่างเกิดเหตุ/การรับมือฉุกเฉิน/แจ้งเตือนภัย, after = หลังเกิดเหตุ/การฟื้นฟูเยียวยา)",
   "categories": ["เลือกประเภทเหตุการณ์ที่เกี่ยวข้องได้ 1 ถึง 3 รายการจาก [${availableCategories.join(", ")}] เช่น หากเป็นโรคที่มากับน้ำท่วมให้เลือกทั้ง น้ำท่วม และ โรคติดต่อ"],
   "category": "ประเภทเหตุการณ์หลัก 1 รายการจาก [${availableCategories.join(", ")}]",
-  "description": "คำอธิบายสรุปสาระสำคัญ แนวทางปฏิบัติสำหรับประชาชน และกลุ่มเป้าหมายของสื่อ (2-4 ประโยค ภาษาไทยสละสลวย เป็นทางการ)",
+  "description": "สรุปสาระสำคัญด้วยภาษาวัยรุ่นปนทางการ อ่านเข้าใจง่าย มีอิโมจิประกอบ และแบ่งเป็น Bullet points (ขึ้นบรรทัดใหม่ด้วย \\n• ) จำนวน 3-5 ข้อ เช่น:\\n📌 สรุปสั้นๆ เรื่องที่ต้องรู้! ...\\n• ⚠️ ความเสี่ยง/อาการที่ต้องเช็ก: ...\\n• 🛡️ วิธีเซฟตัวเองและคนรอบข้าง: ...\\n• 💡 ทริคสำคัญ/ช่องทางติดต่อ: ...",
   "altText": "คำบรรยายภาพเพื่อการเข้าถึง (Accessibility) อธิบายสิ่งที่อยู่ในภาพและข้อความหลักอย่างกระชับใน 1-2 ประโยค",
   "keywords": ["คำค้นหาที่เกี่ยวข้อง 4-6 คำ"],
   "location": "ชื่อพื้นที่หากปรากฏในภาพ มิฉะนั้นใช้คำว่า จังหวัดสตูล"
@@ -154,15 +156,15 @@ ${extractedText || fileName}
           {
             role: "system",
             content:
-              "คุณเป็นผู้ช่วย AI จัดการคลังสื่อสารความเสี่ยง สำนักงานสาธารณสุขจังหวัดสตูล ตอบกลับเป็น JSON ที่ถูกต้องตามโครงสร้างที่กำหนดเท่านั้น",
+              "คุณเป็นผู้ช่วย AI สื่อสารความเสี่ยงยุคใหม่ของสำนักงานสาธารณสุขจังหวัดสตูล เชี่ยวชาญการสรุปข้อมูลสุขภาพให้เข้าใจง่าย ทันสมัย เข้าถึงวัยรุ่นปนทางการ มีอิโมจิ และจัดรูปแบบเป็น Bullet points ตอบกลับเป็น JSON ที่ถูกต้องตามโครงสร้างที่กำหนดเท่านั้น",
           },
           {
             role: "user",
             content: prompt,
           },
         ],
-        max_tokens: 900,
-        temperature: 0.2,
+        max_tokens: 1100,
+        temperature: 0.3,
       }),
     });
 
@@ -235,12 +237,22 @@ ${extractedText || fileName}
           .map((item) => item.trim())
           .filter(Boolean);
 
+    const rawDescription = Array.isArray(parsed.description)
+      ? parsed.description.map((line) => String(line).trim()).filter(Boolean).join("\n")
+      : String(parsed.description || "").trim();
+
+    const formattedDescription = rawDescription
+      .replace(/\r\n/g, "\n")
+      .replace(/(?:^|\n)\s*[-*]\s+/g, "\n• ")
+      .replace(/([^\n])\s+(•\s)/g, "$1\n$2")
+      .trim();
+
     const suggestion: AiSuggestion = {
       title: String(parsed.title || "").trim() || fileName.replace(/\.[^.]+$/, ""),
       phase: normalizePhase(parsed.phase),
       category: matchedCategory,
       categories: matchedCategories,
-      description: String(parsed.description || "").trim(),
+      description: formattedDescription,
       altText: String(parsed.altText || "").trim(),
       keywords: rawKeywords,
       location: String(parsed.location || "จังหวัดสตูล").trim() || "จังหวัดสตูล",
