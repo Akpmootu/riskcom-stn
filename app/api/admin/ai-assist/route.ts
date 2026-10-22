@@ -3,6 +3,13 @@ import type { IncidentPhase } from "@/app/types";
 
 export const dynamic = "force-dynamic";
 
+// Primary OCR Engine: AksonOCR (Thai AI OCR)
+const AKSONOCR_API_KEY =
+  process.env.AKSONOCR_API_KEY ||
+  "ak_93d2296ec7d44c10b3c955c3118deaa8";
+const AKSONOCR_UPLOAD_URL = "https://backend.aksonocr.com/api/v2/upload";
+
+// Fallback OCR & Chat LLM: OpenTyphoon AI
 const TYPHOON_API_URL = "https://api.opentyphoon.ai/v1/chat/completions";
 const TYPHOON_API_KEY =
   process.env.TYPHOON_API_KEY ||
@@ -37,6 +44,7 @@ export type AiSuggestion = {
   location: string;
   extractedText?: string;
   captionOptions?: CaptionOption[];
+  ocrEngine?: "aksonocr" | "typhoon-ocr" | "none";
 };
 
 function extractJsonObject(raw: string): Record<string, unknown> | null {
@@ -117,29 +125,160 @@ function normalizeCaptionOptions(
   ];
 }
 
-async function fetchAsDataUrl(url: string): Promise<string> {
-  if (!url || url.startsWith("data:image/")) return url;
+async function runAksonOcr(
+  buffer: Buffer,
+  mimeType: string,
+  filename: string,
+): Promise<{ text: string; error?: string; rateLimited?: boolean }> {
   try {
-    const res = await fetch(url, {
+    const form = new FormData();
+    const ext = mimeType.includes("png") ? "png" : "jpg";
+    const blobName = filename || `document.${ext}`;
+    const blob = new Blob([new Uint8Array(buffer)], { type: mimeType });
+    form.append("file", blob, blobName);
+    form.append("model", "aksonocr-1.0");
+
+    const res = await fetch(AKSONOCR_UPLOAD_URL, {
+      method: "POST",
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        Authorization: `Bearer ${AKSONOCR_API_KEY}`,
+        "X-API-Key": AKSONOCR_API_KEY,
       },
+      body: form,
+      signal: AbortSignal.timeout(22000),
     });
-    if (res.ok) {
-      const cType = res.headers.get("content-type") || "image/jpeg";
-      const mime = cType.split(";")[0].trim();
-      const arr = await res.arrayBuffer();
-      const buf = Buffer.from(arr);
-      if (buf.length > 0 && buf.length < 6 * 1024 * 1024) {
-        return `data:${mime};base64,${buf.toString("base64")}`;
+
+    if (res.status === 429 || res.status === 402 || res.status === 403) {
+      return { text: "", error: `AksonOCR Quota/Rate Limit (${res.status})`, rateLimited: true };
+    }
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return { text: "", error: `AksonOCR error ${res.status}: ${errText.slice(0, 150)}` };
+    }
+
+    const data = (await res.json()) as {
+      pages?: Array<{ index?: number; markdown?: string; text?: string }>;
+    };
+
+    if (Array.isArray(data.pages) && data.pages.length > 0) {
+      let combined = data.pages
+        .map((p) => p.markdown || p.text || "")
+        .filter(Boolean)
+        .join("\n\n");
+      combined = combined.replace(/<img[^>]*src=["']data:image\/[^"']+["'][^>]*>/gi, "");
+      combined = combined.replace(/!\[[^\]]*\]\(data:image\/[^)]+\)/gi, "");
+      if (combined.trim()) {
+        return { text: combined.trim() };
       }
     }
+
+    return { text: "", error: "AksonOCR returned no pages" };
   } catch (err) {
-    console.warn("fetchAsDataUrl failed:", err);
+    return {
+      text: "",
+      error: err instanceof Error ? err.message : "AksonOCR request failed",
+    };
   }
-  return url;
+}
+
+async function runTyphoonOcrFallback(dataUrl: string): Promise<string> {
+  try {
+    const res = await fetch(TYPHOON_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${TYPHOON_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "typhoon-ocr",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "image_url",
+                image_url: { url: dataUrl },
+              },
+            ],
+          },
+        ],
+        max_tokens: 1024,
+        temperature: 0.1,
+      }),
+      signal: AbortSignal.timeout(25000),
+    });
+
+    if (res.ok) {
+      const data = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const text = String(data.choices?.[0]?.message?.content || "").trim();
+      if (text.includes("Extract all text from the image")) {
+        return "";
+      }
+      return text;
+    }
+  } catch {}
+  return "";
+}
+
+async function extractTextFromImage(
+  imageDataUrl: string,
+  imageUrl: string,
+  fileName: string,
+): Promise<{ text: string; engine: "aksonocr" | "typhoon-ocr" | "none" }> {
+  let targetBuffer: Buffer | null = null;
+  let targetMimeType = "image/jpeg";
+  let targetDataUrl = "";
+
+  if (imageDataUrl && imageDataUrl.startsWith("data:image/")) {
+    targetDataUrl = imageDataUrl;
+    const match = imageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (match) {
+      targetMimeType = match[1] || "image/jpeg";
+      targetBuffer = Buffer.from(match[2], "base64");
+    }
+  } else if (imageUrl) {
+    try {
+      const res = await fetch(imageUrl, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+          Accept: "image/*,*/*",
+        },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (res.ok) {
+        const cType = res.headers.get("content-type") || "image/jpeg";
+        targetMimeType = cType.split(";")[0].trim();
+        const arr = await res.arrayBuffer();
+        targetBuffer = Buffer.from(arr);
+        targetDataUrl = `data:${targetMimeType};base64,${targetBuffer.toString("base64")}`;
+      }
+    } catch (e) {
+      console.warn("Failed to fetch imageUrl:", e);
+    }
+  }
+
+  // 1. Primary OCR: AksonOCR (Thai AI OCR - high precision)
+  if (targetBuffer && targetBuffer.length > 0) {
+    const aksonResult = await runAksonOcr(targetBuffer, targetMimeType, fileName);
+    if (aksonResult.text) {
+      return { text: aksonResult.text, engine: "aksonocr" };
+    }
+    console.warn("AksonOCR fallback:", aksonResult.error || "no text", "-> switching to Typhoon OCR...");
+  }
+
+  // 2. Fallback OCR: Typhoon OCR (when AksonOCR is limited or unavailable)
+  if (targetDataUrl) {
+    const typhoonText = await runTyphoonOcrFallback(targetDataUrl);
+    if (typhoonText) {
+      return { text: typhoonText, engine: "typhoon-ocr" };
+    }
+  }
+
+  return { text: "", engine: "none" };
 }
 
 export async function POST(request: Request) {
@@ -172,106 +311,50 @@ export async function POST(request: Request) {
       );
     }
 
-    let extractedText = "";
-
-    // Step 1: Extract text and visual context from image using Typhoon OCR
-    let targetImageForOcr = "";
-    if (imageDataUrl && imageDataUrl.startsWith("data:image/")) {
-      targetImageForOcr = imageDataUrl;
-    } else if (imageUrl) {
-      targetImageForOcr = await fetchAsDataUrl(imageUrl);
-    }
-
-    if (targetImageForOcr) {
-      try {
-        const ocrResponse = await fetch(TYPHOON_API_URL, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${TYPHOON_API_KEY}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: "typhoon-ocr",
-            messages: [
-              {
-                role: "user",
-                content: [
-                  {
-                    type: "text",
-                    text: "อ่านข้อความภาษาไทยและภาษาอังกฤษทั้งหมดในภาพอินโฟกราฟิก/โปสเตอร์นี้อย่างละเอียดและครบถ้วน พร้อมสรุปองค์ประกอบภาพและข้อความสำคัญ",
-                  },
-                  {
-                    type: "image_url",
-                    image_url: { url: targetImageForOcr },
-                  },
-                ],
-              },
-            ],
-            max_tokens: 1024,
-            temperature: 0.1,
-          }),
-        });
-
-        if (ocrResponse.ok) {
-          const ocrData = (await ocrResponse.json()) as {
-            choices?: Array<{ message?: { content?: string } }>;
-          };
-          extractedText = String(ocrData.choices?.[0]?.message?.content || "").trim();
-        }
-      } catch {
-        // Fallback gracefully without throwing
-      }
-    }
+    // Step 1: Run Primary OCR (AksonOCR) with Fallback (Typhoon OCR)
+    const ocrResult = await extractTextFromImage(imageDataUrl, imageUrl, fileName);
+    const extractedText = ocrResult.text;
 
     // Step 2: Content Marketing & Copywriter Specialist Instruction
-    const prompt = `คุณคือผู้เชี่ยวชาญด้าน Content Marketing และ Copywriter มืออาชีพที่เชี่ยวชาญการเขียนแคปชั่นบน Social Media (เช่น Facebook, Line OA, Twitter/X, TikTok) ให้กับสำนักงานสาธารณสุขจังหวัดสตูล
+    const prompt = `คุณคือ Content Marketing และ Copywriter มืออาชีพของสำนักงานสาธารณสุขจังหวัดสตูล
+หน้าที่ของคุณ: นำข้อความที่ตรวจพบในภาพจริงด้านล่างนี้ มาคิดและสรุปเป็นข้อมูลสื่อและแคปชั่น 3 สไตล์ ที่ถูกต้องและตรงกับภาพ 100%
 
-Task: ช่วยวิเคราะห์ภาพจริงที่แนบมานี้ และเขียนแคปชั่นสำหรับโพสต์ประชาสัมพันธ์/สื่อสารความเสี่ยงด้านสุขภาพ
-⚠️ กฎเหล็กสำคัญ:
-1. การคิดของ AI ต้องสอดคล้องกับภาพจริง: ต้องอิงเนื้อหาจากข้อความในภาพ (OCR) และรายละเอียดภาพด้านล่างนี้เป็นหลัก ห้ามสมมุติหรือมโนเรื่องที่ไม่ปรากฏในภาพเด็ดขาด
-2. สรุปข้อมูลให้สั้นและเข้าใจได้ง่ายทันที: ผู้อ่านและประชาชนต้องการอ่านแล้วเข้าใจทันที ไม่ต้องบรรยายยาวเป็นพารากราฟ
-3. ภาษามืออาชีพแต่ทันสมัย: ใช้ภาษาที่เป็นทางการ น่าเชื่อถือ แต่ผสมผสานคำสมัยใหม่ (Trendy words) หรือคำติดปาก เพื่อไม่ให้ดูน่าเบื่อ เข้าถึงวัยรุ่นและประชาชนได้จริง
-4. Formatting & Elements:
-   - Emoji: เลือกใช้อิโมจิที่ตรงกับเนื้อหา ตกแต่งให้อ่านง่าย สบายตา
-   - Bullet points: สรุปประเด็นสำคัญเป็นข้อๆ โดยใช้ • นำหน้าแต่ละข้อ
-   - การไฮไลต์: ใส่เครื่องหมาย **...** ล้อมรอบคำหรือข้อความที่ต้องการย้ำเตือนอย่างชัดเจน เช่น **ห้ามเดินลุยน้ำเท้าเปล่า**, **โทร 1669 ทันที**
-   - Hashtags: แฮชแท็กที่ตรงกับเนื้อหา 3-5 คำ (เช่น #สาธารณสุขสตูล #เตือนภัยสุขภาพ #สตูลปลอดภัย)
-
-ข้อมูลภาพและเนื้อหาประกอบ:
-- ชื่อสื่อ/หัวข้อเดิม: ${currentTitle || "ไม่ระบุ"}
-- เนื้อหาเดิม: ${currentDescription || "ไม่ระบุ"}
-- รายละเอียดและข้อความที่ตรวจพบในภาพจริง:
+ข้อความที่ตรวจพบในภาพจริง (อ่านโดยระบบ OCR ภาษาไทย):
 """
-${extractedText || currentTitle || fileName || "ไม่มีข้อความเพิ่มเติม"}
+${extractedText || currentTitle || fileName || "ไม่มีข้อความในภาพ"}
 """
-- หมวดหมู่เหตุการณ์ในระบบ: ${availableCategories.join(", ")}
 
-Tone & Style ของแคปชั่น 3 สไตล์:
-1. สไตล์ที่ 1: "สั้น กระตุกสายตา (Hook & Punchy)" — เน้นประโยคเปิด Hook กระตุกสายตา สั้น กระชับ ฉับไวใน 3 วินาที
-2. สไตล์ที่ 2: "ห่วงใย ใส่ใจ เตือนภัย (Caring & Actionable)" — เน้นความห่วงใย ชี้จุดเสี่ยงและบอกวิธีป้องกันแบบทำตามได้ทันที
-3. สไตล์ที่ 3: "ทันสมัย ชวนแชร์ ภาษาคนรุ่นใหม่ (Trendy & Engaging)" — ภาษากระฉับกระเฉง ชวนกดเซฟและแชร์ต่อให้คนที่รัก
-2. ภาษามืออาชีพแต่ทันสมัย: ใช้ภาษาที่เป็นทางการ น่าเชื่อถือ แต่ผสมผสานคำสมัยใหม่ (Trendy words) หรือคำติดปาก เพื่อไม่ให้ดูน่าเบื่อ เข้าถึงวัยรุ่นและประชาชนได้จริง
-3. Formatting & Elements:
-   - Emoji: เลือกใช้อิโมจิที่ตรงกับเนื้อหา ตกแต่งให้สวยงาม สบายตา ช่วยแบ่งสัดส่วนเนื้อหาให้เปิดอ่านง่าย
-   - Bullet points: ใช้ • สรุปข้อความสำคัญอย่างเป็นระเบียบ
-   - การไฮไลต์: ใส่เครื่องหมาย **...** ล้อมรอบคำสำคัญที่ต้องการย้ำเตือน เช่น **ห้ามเดินลุยน้ำเท้าเปล่า**, **โทร 1669 ทันที**
-   - Hashtags: แฮชแท็กที่ตรงกับเนื้อหาโดยตรง ผสมผสานแฮชแท็กที่เป็นกระแส (Trending/High search) เช่น #สาธารณสุขสตูล, #เตือนภัยสุขภาพ, #สตูลปลอดภัย, #เช็กก่อนแชร์
-
-Output: ขอผลลัพธ์ตัวเลือกแคปชั่นทั้งหมด 3 แบบที่สไตล์ต่างกัน เพื่อให้ผู้ใช้เลือกใช้แบบที่ดีที่สุด:
-1. สไตล์ที่ 1: "สั้น กระตุกสายตา (Hook & Punchy)" — เน้นเปิดด้วยประโยค Hook กระตุกสายตา สั้น กระชับ ฉับไวใน 3 วินาที
-2. สไตล์ที่ 2: "ห่วงใย ใส่ใจ เตือนภัย (Caring & Actionable)" — เน้นความห่วงใย ชี้จุดเสี่ยงและบอกวิธีป้องกันแบบทำตามได้ทันที
-3. สไตล์ที่ 3: "ทันสมัย ชวนแชร์ ภาษาคนรุ่นใหม่ (Trendy & Engaging)" — ภาษากระฉับกระเฉง ชวนกดเซฟและแชร์ต่อให้คนที่รัก
+⚠️ กฎเหล็กสำคัญที่สุด (เนื้อหาต้องตรงกับภาพที่อัปโหลด 100% ห้ามคิดนอกเรื่อง):
+1. ยึดเนื้อหาจาก "ข้อความที่ตรวจพบในภาพจริง" ด้านบนเป็นหลักเท่านั้น:
+   - หากภาพเป็นเรื่องโรคไข้เลือดออก ชื่อเรื่อง เนื้อหา และแคปชั่นต้องเป็นเรื่องโรคไข้เลือดออกเท่านั้น
+   - หากภาพเป็นเรื่องโรคฉี่หนู/น้ำท่วม/หมอกควัน/ความดันโลหิต/การปฐมพยาบาล ต้องเขียนให้ตรงกับเรื่องนั้นตามภาพจริงเท่านั้น
+   - ห้ามเดาหรือเปลี่ยนเรื่องเป็นเรื่องอื่นที่ไม่ปรากฏในภาพเด็ดขาด
+2. หมวดหมู่ (categories): ให้เลือก 1-3 รายการที่ตรงกับเนื้อหาในภาพจริงที่สุด จากรายการนี้เท่านั้น: [${availableCategories.join(", ")}]
+3. ช่วงเหตุการณ์ (phase): วิเคราะห์จากเนื้อหาภาพ
+   - before = การเตรียมตัว, ป้องกันล่วงหน้า, ให้ความรู้
+   - during = กำลังเกิดเหตุ, อาการฉุกเฉิน, เตือนภัยเร่งด่วน
+   - after = การฟื้นฟูหลังเกิดเหตุ, การดูแลต่อเนื่อง
+4. รูปแบบแคปชั่น (Formatting & Elements):
+   - สั้น กระชับ อ่านเข้าใจทันทีใน 3-5 วินาที
+   - แบ่งเป็น Bullet points (• ) สรุปประเด็นหลัก 3-4 ข้อ
+   - ใส่อิโมจิที่ตรงกับเนื้อหา (เช่น 🦟 ไข้เลือดออก, 🌊 น้ำท่วม, 🚨 ด่วน, 💊 ยา, 📞 1669)
+   - ไฮไลต์ข้อความสำคัญด้วยเครื่องหมาย **...** เช่น **ห้ามซื้อยาทานเอง**, **โทร 1669 ทันที**
+   - แฮชแท็ก 3-5 คำที่ตรงกับเนื้อหาภาพจริง
+5. ตัวเลือกแคปชั่น 3 สไตล์ (captionOptions):
+   - สไตล์ 1: สั้น กระตุกสายตา (Hook & Punchy) — ประโยคเปิดสั้นกระตุกสายตา
+   - สไตล์ 2: ห่วงใย ใส่ใจ เตือนภัย (Caring & Actionable) — ประโยคเปิดแบบห่วงใย ชี้จุดเสี่ยงและวิธีป้องกัน
+   - สไตล์ 3: ทันสมัย ชวนแชร์ ภาษาคนรุ่นใหม่ (Trendy & Engaging) — ภาษากระฉับกระเฉง ชวนแชร์ต่อ
 
 ตอบกลับเป็น JSON เท่านั้น ตามโครงสร้างดังนี้:
 {
-  "title": "ชื่อหัวข้อโพสต์หลักที่แนะนำ มีอิโมจิต้นประโยค (ไม่เกิน 70 ตัวอักษร)",
-  "phase": "เลือกค่าเดียวจาก before หรือ during หรือ after",
-  "categories": ["หมวดหมู่ที่เกี่ยวข้อง 1-3 รายการจาก [${availableCategories.join(", ")}]"],
+  "title": "ชื่อหัวข้อโพสต์หลัก มีอิโมจิต้นประโยค (ไม่เกิน 70 ตัวอักษร สอดคล้องกับภาพจริง)",
+  "phase": "before หรือ during หรือ after",
   "category": "หมวดหมู่หลัก 1 รายการ",
+  "categories": ["หมวดหมู่ 1-3 รายการจากรายการที่กำหนด"],
   "description": "แคปชั่นหลักแบบ Bullet points (\\n• ) พร้อมอิโมจิและ **คำไฮไลต์**",
   "altText": "คำบรรยายภาพสั้นๆ 1 ประโยคเพื่อการเข้าถึง",
   "keywords": ["คำค้นหาและแฮชแท็ก 4-6 คำ"],
-  "location": "ชื่อพื้นที่ เช่น จังหวัดสตูล",
+  "location": "จังหวัดสตูล",
   "captionOptions": [
     {
       "id": "1",
@@ -421,6 +504,7 @@ Output: ขอผลลัพธ์ตัวเลือกแคปชั่น
       location: String(parsed.location || "จังหวัดสตูล").trim() || "จังหวัดสตูล",
       extractedText,
       captionOptions,
+      ocrEngine: ocrResult.engine,
     };
 
     return json({ ok: true, suggestion });

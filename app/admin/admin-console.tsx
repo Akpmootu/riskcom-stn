@@ -138,6 +138,7 @@ type AiSuggestionResponse = {
     location: string;
     extractedText?: string;
     captionOptions?: CaptionOption[];
+    ocrEngine?: "aksonocr" | "typhoon-ocr" | "none";
   };
 };
 
@@ -1182,7 +1183,15 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     try {
       let imageDataUrl = "";
       if (targetFile.type.startsWith("image/")) {
-        imageDataUrl = await createCompressedImageDataUrl(targetFile, 1280);
+        if (targetFile.size <= 4 * 1024 * 1024) {
+          imageDataUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(String(reader.result || ""));
+            reader.readAsDataURL(targetFile);
+          });
+        } else {
+          imageDataUrl = await createCompressedImageDataUrl(targetFile, 1920);
+        }
       }
 
       const response = await fetch("/api/admin/ai-assist", {
@@ -1226,9 +1235,16 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
         setSelectedUploadCaptionIdx(0);
       }
 
+      const engineLabel =
+        suggestion.ocrEngine === "aksonocr"
+          ? "AksonOCR"
+          : suggestion.ocrEngine === "typhoon-ocr"
+            ? "Typhoon OCR (ระบบสำรอง)"
+            : "AI";
+
       setAiStatusMessage({
         type: "success",
-        text: "AI วิเคราะห์ภาพและเติมชื่อสื่อ ช่วงเหตุการณ์ ประเภท Tag คำอธิบาย และคำบรรยายให้เรียบร้อยแล้ว (เลือกเพิ่มหรือแก้ไขได้ตามต้องการ)",
+        text: `AI (${engineLabel}) วิเคราะห์ข้อความในภาพจริงเรียบร้อยแล้ว ได้เนื้อหาตรงกับภาพ (เลือกแคปชั่น 3 สไตล์ได้ด้านล่าง)`,
       });
     } catch (error) {
       setAiStatusMessage({
@@ -1520,9 +1536,15 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
         if (s.captionOptions && Array.isArray(s.captionOptions) && s.captionOptions.length > 0) {
           setEditCaptionOptions(s.captionOptions);
           applyCaptionOption(s.captionOptions[0], 0);
+          const engineLabel =
+            s.ocrEngine === "aksonocr"
+              ? "AksonOCR"
+              : s.ocrEngine === "typhoon-ocr"
+                ? "Typhoon OCR (ระบบสำรอง)"
+                : "AI";
           setEditAiMessage({
             type: "success",
-            text: "AI สร้างแคปชั่น 3 สไตล์เรียบร้อยแล้ว! เลือกสไตล์ที่ต้องการด้านล่างได้ทันที",
+            text: `AI (${engineLabel}) วิเคราะห์ภาพจริงและสร้างแคปชั่น 3 สไตล์ตรงกับภาพเรียบร้อยแล้ว! เลือกสไตล์ที่ต้องการด้านล่างได้ทันที`,
           });
         } else {
           if (s.title) setEditTitle(s.title);
