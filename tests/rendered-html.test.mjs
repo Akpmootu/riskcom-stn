@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
+import vm from "node:vm";
 
 async function render(path = "/", method = "GET") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -157,6 +158,7 @@ test("includes responsive media management, Kanit, system skeletons, and existin
   assert.match(appsScript, /function updateMedia_/);
   assert.match(appsScript, /function trackVisitorView_/);
   assert.equal(publicAppsScript, appsScript);
+  assert.doesNotThrow(() => new vm.Script(appsScript), "Google Apps Script must be valid JavaScript syntax");
 
   await Promise.all([
     access(new URL("../app/icon.png", import.meta.url)),

@@ -82,11 +82,11 @@ function doGet(event) {
     const action = String((event && event.parameter && event.parameter.action) || "list");
     if (action === "list") {
       const status = String((event.parameter && event.parameter.status) || "published");
-      return jsonOutput_({ ok: true, items: listMedia_(status) }
+      return jsonOutput_({ ok: true, items: listMedia_(status) });
+    }
     if (action === "getSiteSetting") {
       const key = String((event && event.parameter && event.parameter.key) || "");
       return jsonOutput_({ ok: true, setting: getSiteSetting_(key) });
-    });
     }
     return jsonOutput_({ ok: false, error: "Unknown action" });
   } catch (error) {
