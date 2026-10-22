@@ -17,6 +17,7 @@ const MEDIA_HISTORY_SHEET_NAME = "media_edit_logs";
 const SITE_STATS_SHEET_NAME = "site_stats";
 const SITE_SETTINGS_SHEET_NAME = "site_settings";
 const SUPER_ADMIN_EMAIL = "akaporn1234@gmail.com";
+const DEFAULT_SPREADSHEET_ID = "1Cr6Adjb90nc1a3bIwg_WvbTZ44g31MBmTVc-rlXwcbU";
 const HEADERS = [
   "id",
   "title",
@@ -81,7 +82,11 @@ function doGet(event) {
     const action = String((event && event.parameter && event.parameter.action) || "list");
     if (action === "list") {
       const status = String((event.parameter && event.parameter.status) || "published");
-      return jsonOutput_({ ok: true, items: listMedia_(status) });
+      return jsonOutput_({ ok: true, items: listMedia_(status) }
+    if (action === "getSiteSetting") {
+      const key = String((event && event.parameter && event.parameter.key) || "");
+      return jsonOutput_({ ok: true, setting: getSiteSetting_(key) });
+    });
     }
     return jsonOutput_({ ok: false, error: "Unknown action" });
   } catch (error) {
@@ -165,7 +170,7 @@ function doPost(event) {
 function ensureResources_() {
   const properties = PropertiesService.getScriptProperties();
   let folderId = properties.getProperty("SATUN_FOLDER_ID");
-  let spreadsheetId = properties.getProperty("SATUN_SHEET_ID");
+  let spreadsheetId = properties.getProperty("SATUN_SHEET_ID") || DEFAULT_SPREADSHEET_ID;
   let folder;
   let spreadsheet;
 
@@ -224,7 +229,7 @@ function ensureResources_() {
 
 function getFastMediaSheet_() {
   const properties = PropertiesService.getScriptProperties();
-  const spreadsheetId = properties.getProperty("SATUN_SHEET_ID");
+  const spreadsheetId = properties.getProperty("SATUN_SHEET_ID") || DEFAULT_SPREADSHEET_ID;
   if (spreadsheetId) {
     try {
       const spreadsheet = SpreadsheetApp.openById(spreadsheetId);

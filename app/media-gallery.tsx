@@ -437,18 +437,52 @@ export function MediaGallery() {
     const storedWatch = readStoredWatchConfig();
     if (storedWatch) setWatchConfig(storedWatch);
     let active = true;
-    fetch("/api/watch-situation")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { ok?: boolean; config?: Partial<WatchSituationConfig> } | null) => {
-        if (active && data?.config) {
-          const normalized = normalizeWatchSituation(data.config);
-          setWatchConfig(normalized);
-          writeStoredWatchConfig(normalized);
-        }
-      })
-      .catch(() => undefined);
+
+    const loadWatchSituation = () => {
+      fetch("/api/watch-situation?refresh=" + Date.now(), { cache: "no-store" })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data: { ok?: boolean; config?: Partial<WatchSituationConfig> } | null) => {
+          if (active && data?.config) {
+            const normalized = normalizeWatchSituation(data.config);
+            setWatchConfig(normalized);
+            writeStoredWatchConfig(normalized);
+          }
+        })
+        .catch(() => undefined);
+    };
+
+    loadWatchSituation();
+
+    const handleCustomUpdate = (event: Event) => {
+      const custom = event as CustomEvent<WatchSituationConfig>;
+      if (custom.detail) {
+        setWatchConfig(normalizeWatchSituation(custom.detail));
+      } else {
+        const stored = readStoredWatchConfig();
+        if (stored) setWatchConfig(stored);
+      }
+    };
+
+    const handleStorageUpdate = (event: StorageEvent) => {
+      if (!event.key || event.key === "satun_riskcom_watch_situation") {
+        const stored = readStoredWatchConfig();
+        if (stored) setWatchConfig(stored);
+      }
+    };
+
+    const handleFocus = () => {
+      loadWatchSituation();
+    };
+
+    window.addEventListener("watch-situation-updated", handleCustomUpdate);
+    window.addEventListener("storage", handleStorageUpdate);
+    window.addEventListener("focus", handleFocus);
+
     return () => {
       active = false;
+      window.removeEventListener("watch-situation-updated", handleCustomUpdate);
+      window.removeEventListener("storage", handleStorageUpdate);
+      window.removeEventListener("focus", handleFocus);
     };
   }, []);
 

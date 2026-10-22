@@ -400,7 +400,45 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [editingTagIcon, setEditingTagIcon] = useState(TAG_ICON_PRESETS[0].icon);
   const [addingCategory, setAddingCategory] = useState(false);
   const [categoryMessage, setCategoryMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const [watchMessage, setWatchMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [watchMessage, setWatchMessage] = useState<{ type: "success" | "error" | "warning"; text: string } | null>(null);
+  const [recMediaSearch, setRecMediaSearch] = useState("");
+  const [recMediaCategory, setRecMediaCategory] = useState("all");
+  const [recMediaPhase, setRecMediaPhase] = useState<string>("all");
+
+  const availableRecCategories = useMemo(() => {
+    const cats = new Set<string>();
+    items.forEach((item) => {
+      const itemCats = getItemCategories(item);
+      itemCats.forEach((cat) => {
+        if (cat.trim()) cats.add(cat.trim());
+      });
+    });
+    tagConfigs.forEach((t) => {
+      if (t.name.trim()) cats.add(t.name.trim());
+    });
+    return Array.from(cats);
+  }, [items, tagConfigs]);
+
+  const filteredRecMediaItems = useMemo(() => {
+    return items.filter((item) => {
+      if (recMediaCategory !== "all") {
+        const itemCats = getItemCategories(item);
+        if (!itemCats.includes(recMediaCategory)) return false;
+      }
+      if (recMediaPhase !== "all") {
+        if (item.phase !== recMediaPhase) return false;
+      }
+      if (recMediaSearch.trim()) {
+        const q = recMediaSearch.trim().toLowerCase();
+        const titleMatch = (item.title || "").toLowerCase().includes(q);
+        const descMatch = (item.description || "").toLowerCase().includes(q);
+        const locMatch = (item.location || "").toLowerCase().includes(q);
+        const catMatch = getItemCategories(item).some((cat) => cat.toLowerCase().includes(q));
+        if (!titleMatch && !descMatch && !locMatch && !catMatch) return false;
+      }
+      return true;
+    });
+  }, [items, recMediaCategory, recMediaPhase, recMediaSearch]);
 
   const fileInput = useRef<HTMLInputElement>(null);
   const editFileInput = useRef<HTMLInputElement>(null);
@@ -432,7 +470,10 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       const updated: WatchSituationConfig = {
         ...watchDraft,
         updatedAt: new Date().toISOString(),
-        updatedBy: [currentUser.firstName, currentUser.lastName].filter(Boolean).join(" ") || currentUser.email || "ผู้ดูแลระบบ",
+        updatedBy:
+          [currentUser.firstName, currentUser.lastName].filter(Boolean).join(" ") ||
+          currentUser.email ||
+          "ผู้ดูแลระบบ",
       };
       const res = await fetch("/api/watch-situation", {
         method: "POST",
@@ -445,12 +486,34 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
         setWatchConfig(saved);
         setWatchDraft(saved);
         writeStoredWatchConfig(saved);
-        setWatchMessage({ type: "success", text: "บันทึกการตั้งค่าสถานการณ์เฝ้าระวังเรียบร้อยแล้ว" });
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("watch-situation-updated", { detail: saved }));
+          window.dispatchEvent(new Event("storage"));
+        }
+        if (data.warning) {
+          setWatchMessage({
+            type: "warning",
+            text: `บันทึกสำเร็จ (มีข้อสังเกต): ${data.warning}`,
+          });
+        } else {
+          setWatchMessage({
+            type: "success",
+            text: data.persisted
+              ? "บันทึกและส่งข้อมูลลงฐานข้อมูล Google Sheets เรียบร้อยแล้ว (หน้าแรกของเว็บไซต์อัปเดตทันที)"
+              : "บันทึกการตั้งค่าสถานการณ์เฝ้าระวังเรียบร้อยแล้ว (หน้าแรกของเว็บไซต์อัปเดตทันที)",
+          });
+        }
       } else {
-        setWatchMessage({ type: "error", text: data.message || "เกิดข้อผิดพลาดในการบันทึก" });
+        setWatchMessage({
+          type: "error",
+          text: data.message || data.error || "เกิดข้อผิดพลาดในการบันทึก",
+        });
       }
     } catch {
-      setWatchMessage({ type: "error", text: "ไม่สามารถเชื่อมต่อเพื่อบันทึกสถานการณ์ได้" });
+      setWatchMessage({
+        type: "error",
+        text: "ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์เพื่อบันทึกสถานการณ์ได้ กรุณาลองใหม่อีกครั้ง",
+      });
     } finally {
       setWatchSaving(false);
     }
@@ -2256,8 +2319,12 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
             </div>
 
             {watchMessage && (
-              <div className={watchMessage.type === "success" ? "admin-feedback-banner success" : "admin-feedback-banner error"}>
-                {watchMessage.type === "success" ? <Check size={16} /> : <AlertTriangle size={16} />}
+              <div className={`admin-feedback-banner ${watchMessage.type}`}>
+                {watchMessage.type === "success" ? (
+                  <Check size={16} />
+                ) : (
+                  <AlertTriangle size={16} />
+                )}
                 <span>{watchMessage.text}</span>
               </div>
             )}
@@ -2636,86 +2703,331 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                     </span>
                     <div>
                       <h3>สื่อแนะนำในสถานการณ์นี้ (Recommended Media)</h3>
-                      <p>เลือกสื่อจากคลังสื่อ (สูงสุด 4 รายการ) ที่ต้องการปักหมุดให้ประชาชนเห็นในการ์ดแนะนำบนหน้าแรก</p>
+                      <p>ค้นหาและกรองตามประเภทเหตุการณ์ เพื่อเลือกสื่อจากคลังสื่อ (สูงสุด 4 รายการ) สำหรับปักหมุดบนหน้าแรก</p>
                     </div>
+                  </div>
+                  <div className="pinned-count-badge-wrapper">
+                    <span className={`pinned-count-pill ${watchDraft.pinnedMediaIds.length >= 4 ? "is-full" : ""}`}>
+                      <i className="fa-solid fa-thumbtack" /> ปักหมุดแล้ว {watchDraft.pinnedMediaIds.length} / 4 รายการ
+                    </span>
+                    {watchDraft.pinnedMediaIds.length > 0 && (
+                      <button
+                        type="button"
+                        className="pinned-clear-btn"
+                        onClick={() => setWatchDraft({ ...watchDraft, pinnedMediaIds: [] })}
+                        title="ยกเลิกการปักหมุดทั้งหมด"
+                      >
+                        <RotateCcw size={13} /> ล้างทั้งหมด
+                      </button>
+                    )}
                   </div>
                 </div>
 
                 <div className="watch-card-body">
-                  <div className="pinned-media-selector-box">
-                    <label htmlFor="pinned-media-select" className="pinned-selector-label">
-                      <i className="fa-solid fa-plus-circle" style={{ color: "#0284c7", marginRight: 6 }} />
-                      เลือกสื่อจากคลังเพื่อเพิ่มเข้าสถานการณ์ :
-                    </label>
-                    <div className="pinned-selector-row">
-                      <div className="input-with-icon" style={{ flex: 1 }}>
-                        <i className="fa-solid fa-images input-prefix-icon" aria-hidden="true" />
-                        <select
-                          id="pinned-media-select"
-                          className="modular-select-input"
-                          onChange={(e) => {
-                            const id = e.target.value;
-                            if (!id) return;
-                            if (!watchDraft.pinnedMediaIds.includes(id)) {
-                              setWatchDraft({
-                                ...watchDraft,
-                                pinnedMediaIds: [...watchDraft.pinnedMediaIds, id],
-                              });
-                            }
-                            e.target.value = "";
-                          }}
-                          defaultValue=""
-                        >
-                          <option value="">-- เลือกสื่อจากคลังสื่อ สสจ.สตูล เพื่อปักหมุด --</option>
-                          {items.map((item) => (
-                            <option key={item.id} value={item.id}>
-                              {item.title} ({item.location || "สตูล"})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                  {/* Pinned Media List (Cards currently selected) */}
+                  <div className="pinned-selected-section">
+                    <div className="pinned-section-title">
+                      <i className="fa-solid fa-thumbtack text-cyan" />
+                      <span>รายการสื่อที่ปักหมุดแสดงผล ({watchDraft.pinnedMediaIds.length}/4)</span>
                     </div>
-                  </div>
 
-                  <div className="pinned-media-items-grid">
                     {watchDraft.pinnedMediaIds.length === 0 ? (
                       <div className="empty-pinned-banner">
                         <i className="fa-solid fa-circle-info" />
-                        <span>
-                          ยังไม่ได้ระบุสื่อเจาะจง (ระบบจะสุ่มและเลือกสื่อที่ตรงกับประเภทเหตุการณ์และช่วงเวลามาแสดงให้อัตโนมัติ)
-                        </span>
+                        <div>
+                          <strong>ยังไม่ได้เลือกสื่อเจาะจง</strong>
+                          <span>ระบบจะสุ่มและเลือกสื่อที่ตรงกับประเภทเหตุการณ์และช่วงเวลาของสถานการณ์มาแสดงให้อัตโนมัติ</span>
+                        </div>
                       </div>
                     ) : (
-                      watchDraft.pinnedMediaIds.map((id) => {
-                        const item = items.find((i) => i.id === id);
-                        return (
-                          <div key={id} className="pinned-media-card-item">
-                            <div className="pinned-card-left">
-                              <span className="pinned-pin-icon">
-                                <i className="fa-solid fa-thumbtack" />
-                              </span>
+                      <div className="pinned-media-items-grid">
+                        {watchDraft.pinnedMediaIds.map((id) => {
+                          const item = items.find((i) => i.id === id);
+                          const itemCats = item ? getItemCategories(item) : [];
+                          return (
+                            <div key={id} className="pinned-media-card-item">
+                              <div className="pinned-card-thumb">
+                                {(item?.thumbnailUrl || item?.downloadUrl) ? (
+                                  <img
+                                    src={optimizeThumbnailUrl(item?.thumbnailUrl || item?.downloadUrl || "", 120)}
+                                    alt={item.title || "สื่อ"}
+                                    loading="lazy"
+                                  />
+                                ) : (
+                                  <div className="pinned-thumb-fallback">
+                                    <FileImage size={24} />
+                                  </div>
+                                )}
+                              </div>
                               <div className="pinned-card-info">
                                 <strong>{item ? item.title : `รหัสสื่อ: ${id}`}</strong>
-                                <small>{item?.location || "สตูล"} • {item?.category || "ทั่วไป"}</small>
+                                <div className="pinned-card-tags">
+                                  {itemCats.map((cat) => {
+                                    const conf = resolveTagConfig(cat, tagConfigs);
+                                    return (
+                                      <span
+                                        key={cat}
+                                        className="pinned-cat-tag"
+                                        style={{ backgroundColor: `${conf.color}18`, color: conf.color, borderColor: `${conf.color}40` }}
+                                      >
+                                        <i className={`${conf.icon} tag-fa-icon`} /> {cat}
+                                      </span>
+                                    );
+                                  })}
+                                  {item?.location && <span className="pinned-loc-tag"><i className="fa-solid fa-location-dot" /> {item.location}</span>}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                className="pinned-card-del-btn"
+                                onClick={() =>
+                                  setWatchDraft({
+                                    ...watchDraft,
+                                    pinnedMediaIds: watchDraft.pinnedMediaIds.filter((pId) => pId !== id),
+                                  })
+                                }
+                                title="ลบออกจากสื่อแนะนำ"
+                              >
+                                <Trash2 size={14} /> <span>ลบ</span>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Filter & Search Bar for Fast Media Selection */}
+                  <div className="rec-media-filter-container">
+                    <div className="rec-filter-header">
+                      <div className="rec-filter-title">
+                        <i className="fa-solid fa-filter text-blue" />
+                        <span>กรองประเภทเหตุการณ์ และ ค้นหาสื่อที่ต้องการปักหมุด</span>
+                      </div>
+                      <span className="rec-filter-results-count">
+                        พบ <strong>{filteredRecMediaItems.length}</strong> สื่อ
+                      </span>
+                    </div>
+
+                    {/* Category Filter Pills */}
+                    <div className="rec-category-pills-row">
+                      <button
+                        type="button"
+                        className={`rec-cat-pill ${recMediaCategory === "all" ? "is-active" : ""}`}
+                        onClick={() => setRecMediaCategory("all")}
+                      >
+                        <i className="fa-solid fa-layer-group" /> ทั้งหมด ({items.length})
+                      </button>
+                      {availableRecCategories.map((cat) => {
+                        const conf = resolveTagConfig(cat, tagConfigs);
+                        const isSelected = recMediaCategory === cat;
+                        const count = items.filter((item) => getItemCategories(item).includes(cat)).length;
+                        return (
+                          <button
+                            key={cat}
+                            type="button"
+                            className={`rec-cat-pill ${isSelected ? "is-active" : ""}`}
+                            style={
+                              isSelected
+                                ? { backgroundColor: conf.color, color: "#ffffff", borderColor: conf.color }
+                                : { color: conf.color, borderColor: `${conf.color}40` }
+                            }
+                            onClick={() => setRecMediaCategory(cat)}
+                          >
+                            <i className={`${conf.icon} tag-fa-icon`} /> {cat} ({count})
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Search and Phase Filters */}
+                    <div className="rec-search-phase-row">
+                      <div className="rec-search-box input-with-icon">
+                        <i className="fa-solid fa-magnifying-glass input-prefix-icon" aria-hidden="true" />
+                        <input
+                          type="text"
+                          className="modular-text-input"
+                          placeholder="ค้นหาชื่อสื่อ, รายละเอียด, อำเภอ..."
+                          value={recMediaSearch}
+                          onChange={(e) => setRecMediaSearch(e.target.value)}
+                        />
+                        {recMediaSearch && (
+                          <button
+                            type="button"
+                            className="rec-search-clear-btn"
+                            onClick={() => setRecMediaSearch("")}
+                            title="ล้างข้อความค้นหา"
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="rec-phase-filter-box">
+                        <span className="rec-phase-label">ช่วงเวลา:</span>
+                        <div className="rec-phase-btn-group">
+                          {[
+                            { value: "all", label: "ทั้งหมด" },
+                            { value: "before", label: "ก่อนเกิดเหตุ" },
+                            { value: "during", label: "ระหว่างเกิดเหตุ" },
+                            { value: "after", label: "หลังเกิดเหตุ" },
+                          ].map((p) => (
+                            <button
+                              key={p.value}
+                              type="button"
+                              className={`rec-phase-pill ${recMediaPhase === p.value ? "is-active" : ""}`}
+                              onClick={() => setRecMediaPhase(p.value)}
+                            >
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Visual Media Picker Cards Grid */}
+                    <div className="rec-media-cards-grid">
+                      {filteredRecMediaItems.length === 0 ? (
+                        <div className="rec-empty-filter-state">
+                          <i className="fa-solid fa-folder-open" />
+                          <p>ไม่พบสื่อที่ตรงกับเงื่อนไขการค้นหา/หมวดหมู่ที่เลือก</p>
+                          <button
+                            type="button"
+                            className="rec-reset-filter-btn"
+                            onClick={() => {
+                              setRecMediaCategory("all");
+                              setRecMediaPhase("all");
+                              setRecMediaSearch("");
+                            }}
+                          >
+                            <RotateCcw size={13} /> ล้างตัวกรองทั้งหมด
+                          </button>
+                        </div>
+                      ) : (
+                        filteredRecMediaItems.slice(0, 12).map((item) => {
+                          const isPinned = watchDraft.pinnedMediaIds.includes(item.id);
+                          const isFull = watchDraft.pinnedMediaIds.length >= 4;
+                          const itemCats = getItemCategories(item);
+                          const primaryCat = itemCats[0] || item.category || "ทั่วไป";
+                          const conf = resolveTagConfig(primaryCat, tagConfigs);
+
+                          return (
+                            <div key={item.id} className={`rec-media-picker-card ${isPinned ? "is-pinned" : ""}`}>
+                              <div className="rec-card-image-wrap">
+                                {(item.thumbnailUrl || item.downloadUrl) ? (
+                                  <img
+                                    src={optimizeThumbnailUrl(item.thumbnailUrl || item.downloadUrl || "", 240)}
+                                    alt={item.title}
+                                    loading="lazy"
+                                  />
+                                ) : (
+                                  <div className="rec-card-thumb-fallback">
+                                    <FileImage size={32} />
+                                  </div>
+                                )}
+                                <span
+                                  className="rec-card-cat-badge"
+                                  style={{ backgroundColor: conf.color }}
+                                >
+                                  <i className={`${conf.icon} tag-fa-icon`} /> {primaryCat}
+                                </span>
+                              </div>
+                              <div className="rec-card-content">
+                                <h4 className="rec-card-title" title={item.title}>
+                                  {item.title}
+                                </h4>
+                                <div className="rec-card-meta">
+                                  <span><i className="fa-solid fa-location-dot" /> {item.location || "สตูล"}</span>
+                                  <span className="rec-card-phase-dot">
+                                    {item.phase === "before" ? "ก่อนเกิดเหตุ" : item.phase === "during" ? "ระหว่างเกิดเหตุ" : "หลังเกิดเหตุ"}
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  className={`rec-card-action-btn ${
+                                    isPinned ? "is-pinned" : isFull ? "is-disabled" : "is-select"
+                                  }`}
+                                  disabled={!isPinned && isFull}
+                                  onClick={() => {
+                                    if (isPinned) {
+                                      setWatchDraft({
+                                        ...watchDraft,
+                                        pinnedMediaIds: watchDraft.pinnedMediaIds.filter((id) => id !== item.id),
+                                      });
+                                    } else if (!isFull) {
+                                      setWatchDraft({
+                                        ...watchDraft,
+                                        pinnedMediaIds: [...watchDraft.pinnedMediaIds, item.id],
+                                      });
+                                    }
+                                  }}
+                                >
+                                  {isPinned ? (
+                                    <>
+                                      <i className="fa-solid fa-check" /> <span>ปักหมุดแล้ว</span>
+                                    </>
+                                  ) : isFull ? (
+                                    <>
+                                      <i className="fa-solid fa-ban" /> <span>ครบ 4 รายการแล้ว</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <i className="fa-solid fa-plus" /> <span>+ ปักหมุดสื่อนี้</span>
+                                    </>
+                                  )}
+                                </button>
                               </div>
                             </div>
-                            <button
-                              type="button"
-                              className="pinned-card-del-btn"
-                              onClick={() =>
-                                setWatchDraft({
-                                  ...watchDraft,
-                                  pinnedMediaIds: watchDraft.pinnedMediaIds.filter((pId) => pId !== id),
-                                })
-                              }
-                              title="ลบออกจากสื่อแนะนำ"
-                            >
-                              <Trash2 size={14} /> <span>ลบ</span>
-                            </button>
-                          </div>
-                        );
-                      })
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {filteredRecMediaItems.length > 12 && (
+                      <div className="rec-media-more-hint">
+                        <span>แสดง 12 จากทั้งหมด {filteredRecMediaItems.length} รายการ (ใช้ช่องค้นหาด้านบนเพื่อค้นหาสื่ออื่น ๆ เพิ่มเติม)</span>
+                      </div>
                     )}
+
+                    {/* Quick Dropdown Fallback */}
+                    <div className="rec-quick-dropdown-row">
+                      <label htmlFor="pinned-media-select" className="rec-dropdown-label">
+                        <i className="fa-solid fa-list-check" /> หรือเลือกจากรายการย่อ ({filteredRecMediaItems.length} รายการ):
+                      </label>
+                      <select
+                        id="pinned-media-select"
+                        className="modular-select-input"
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          if (!id) return;
+                          if (!watchDraft.pinnedMediaIds.includes(id)) {
+                            if (watchDraft.pinnedMediaIds.length >= 4) {
+                              alert("สามารถปักหมุดสื่อได้สูงสุด 4 รายการ กรุณาลบสื่อที่ไม่ต้องการออกก่อน");
+                              e.target.value = "";
+                              return;
+                            }
+                            setWatchDraft({
+                              ...watchDraft,
+                              pinnedMediaIds: [...watchDraft.pinnedMediaIds, id],
+                            });
+                          }
+                          e.target.value = "";
+                        }}
+                        defaultValue=""
+                      >
+                        <option value="">-- เลือกสื่อจากรายการที่กรองไว้เพื่อปักหมุด --</option>
+                        {filteredRecMediaItems.map((item) => (
+                          <option
+                            key={item.id}
+                            value={item.id}
+                            disabled={watchDraft.pinnedMediaIds.includes(item.id)}
+                          >
+                            {watchDraft.pinnedMediaIds.includes(item.id) ? "✓ [ปักหมุดแล้ว] " : "+ "}
+                            {item.title} ({item.location || "สตูล"})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2789,6 +3101,12 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                   >
                     <RotateCcw size={16} /> คืนค่าเดิม
                   </button>
+                {watchMessage && (
+                  <div className={`admin-feedback-banner ${watchMessage.type}`} style={{ width: "100%", marginBottom: 12 }}>
+                    {watchMessage.type === "success" ? <Check size={16} /> : <AlertTriangle size={16} />}
+                    <span>{watchMessage.text}</span>
+                  </div>
+                )}
                   <button
                     type="button"
                     className="watch-action-btn watch-btn-save-prominent large"
