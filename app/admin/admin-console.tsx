@@ -15,6 +15,7 @@ import {
   FileImage,
   FileText,
   FolderCheck,
+  Gauge,
   Globe,
   HeartPulse,
   History,
@@ -49,6 +50,13 @@ import { signOut } from "next-auth/react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { isManagerRole, type PortalUser } from "../auth-types";
 import { FormattedDescription } from "../lib/text-formatting";
+import {
+  compressImageForWeb,
+  formatFileSize,
+  IMAGE_COMPRESSION_PROFILES,
+  type ImageCompressionProfile,
+  type ImageCompressionResult,
+} from "../lib/image-compression";
 import {
   buildTagConfigFromColor,
   type CategoryTagConfig,
@@ -205,57 +213,6 @@ async function createCompressedImageDataUrl(file: File, maxDimension = 1280): Pr
   });
 }
 
-async function optimizeImageFileForDrive(file: File, maxDimension = 1800): Promise<File> {
-  if (!file.type.startsWith("image/")) return file;
-  if (file.type !== "image/png" && file.size <= 450 * 1024) return file;
-
-  return new Promise((resolve) => {
-    const objectUrl = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-      const scale = Math.min(1, maxDimension / Math.max(img.width || 1, img.height || 1));
-      const width = Math.max(1, Math.round(img.width * scale));
-      const height = Math.max(1, Math.round(img.height * scale));
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        resolve(file);
-        return;
-      }
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, width, height);
-      ctx.drawImage(img, 0, 0, width, height);
-      canvas.toBlob(
-        (blob) => {
-          if (!blob || (file.type !== "image/png" && blob.size >= file.size)) {
-            resolve(file);
-            return;
-          }
-          const baseName = file.name.replace(/\.[^/.]+$/, "") || "media-image";
-          resolve(
-            new File([blob], `${baseName}.jpg`, {
-              type: "image/jpeg",
-              lastModified: Date.now(),
-            }),
-          );
-        },
-        "image/jpeg",
-        0.86,
-      );
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      resolve(file);
-    };
-    img.src = objectUrl;
-  });
-}
-
 function formatFriendlyUploadError(rawError: unknown): string {
   const message = rawError instanceof Error ? rawError.message : String(rawError || "");
   if (
@@ -406,6 +363,18 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [editCategories, setEditCategories] = useState<string[]>(["น้ำท่วม"]);
   const [editExtraSlides, setEditExtraSlides] = useState<MediaSlide[]>([]);
   const [editNewFiles, setEditNewFiles] = useState<QueuedUploadFile[]>([]);
+  const [imageCompressionProfile, setImageCompressionProfile] =
+    useState<ImageCompressionProfile>("content");
+  const [compressionStats, setCompressionStats] = useState<Record<string, ImageCompressionResult>>({});
+  const compressionJobs = useRef(new Map<string, Promise<ImageCompressionResult>>());
+
+  // Pre-compress queued images in the background so sizes are shown before saving.
+  useEffect(() => {
+    for (const entry of [...uploadFiles, ...editNewFiles]) {
+      if (entry.file.type.startsWith("image/")) void getCompressedEntry(entry, imageCompressionProfile);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uploadFiles, editNewFiles, imageCompressionProfile]);
   const [savingEdit, setSavingEdit] = useState(false);
   const [previewItem, setPreviewItem] = useState<MediaItem | null>(null);
   const [previewSlideIndex, setPreviewSlideIndex] = useState(0);
@@ -1140,7 +1109,144 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     }
   }
 
+  function compressionKey(entryId: string, profile: ImageCompressionProfile) {
+    return `${entryId}:${profile}`;
+  }
+
+  /** Compresses a queued image once per profile and caches the result. */
+  function getCompressedEntry(
+    entry: QueuedUploadFile,
+    profile: ImageCompressionProfile = imageCompressionProfile,
+  ): Promise<ImageCompressionResult> {
+    const key = compressionKey(entry.id, profile);
+    const existing = compressionJobs.current.get(key);
+    if (existing) return existing;
+
+    const job = compressImageForWeb(entry.file, profile).catch(
+      (): ImageCompressionResult => ({
+        file: entry.file,
+        profile,
+        originalBytes: entry.file.size,
+        outputBytes: entry.file.size,
+        width: 0,
+        height: 0,
+        quality: null,
+        compressed: false,
+        withinTarget: entry.file.size <= IMAGE_COMPRESSION_PROFILES[profile].targetBytes,
+      }),
+    );
+    compressionJobs.current.set(key, job);
+    void job.then((result) => {
+      if (compressionJobs.current.get(key) !== job) return;
+      setCompressionStats((current) => ({ ...current, [key]: result }));
+    });
+    return job;
+  }
+
+  function forgetCompressedEntries(entryIds: string[]) {
+    if (entryIds.length === 0) return;
+    const prefixes = entryIds.map((id) => `${id}:`);
+    for (const key of Array.from(compressionJobs.current.keys())) {
+      if (prefixes.some((prefix) => key.startsWith(prefix))) compressionJobs.current.delete(key);
+    }
+    setCompressionStats((current) => {
+      const next: Record<string, ImageCompressionResult> = {};
+      for (const [key, value] of Object.entries(current)) {
+        if (!prefixes.some((prefix) => key.startsWith(prefix))) next[key] = value;
+      }
+      return next;
+    });
+  }
+
+  function getCompressionStat(entry: QueuedUploadFile): ImageCompressionResult | undefined {
+    return compressionStats[compressionKey(entry.id, imageCompressionProfile)];
+  }
+
+  function renderCompressionBadge(entry: QueuedUploadFile) {
+    if (!entry.file.type.startsWith("image/")) return null;
+    const stat = getCompressionStat(entry);
+    if (!stat) {
+      return (
+        <span className="compress-badge is-working">
+          <LoaderCircle className="spin" size={12} /> กำลังบีบอัดรูปภาพให้เหมาะกับเว็บไซต์...
+        </span>
+      );
+    }
+    const dims = stat.width && stat.height ? ` • ${stat.width}×${stat.height}px` : "";
+    if (!stat.compressed) {
+      return (
+        <span className={stat.withinTarget ? "compress-badge is-ok" : "compress-badge is-warn"}>
+          <Check size={12} /> ขนาดเหมาะสมแล้ว ใช้ไฟล์เดิม {formatFileSize(stat.outputBytes)}
+          {dims}
+        </span>
+      );
+    }
+    const saved = Math.max(0, Math.round((1 - stat.outputBytes / Math.max(1, stat.originalBytes)) * 100));
+    return (
+      <span className={stat.withinTarget ? "compress-badge is-ok" : "compress-badge is-warn"}>
+        <Gauge size={12} /> บีบอัดแล้ว {formatFileSize(stat.originalBytes)} → {" "}
+        <strong>{formatFileSize(stat.outputBytes)}</strong> (ลดลง {saved}%){dims}
+      </span>
+    );
+  }
+
+  function renderCompressionPicker(entries: QueuedUploadFile[] = uploadFiles) {
+    const images = entries.filter((entry) => entry.file.type.startsWith("image/"));
+    const stats = images.map((entry) => getCompressionStat(entry));
+    const ready = stats.filter((stat): stat is ImageCompressionResult => Boolean(stat));
+    const originalTotal = images.reduce((sum, entry) => sum + entry.file.size, 0);
+    const outputTotal = ready.reduce((sum, stat) => sum + stat.outputBytes, 0);
+    const pending = images.length - ready.length;
+
+    return (
+      <div className="compress-panel">
+        <div className="compress-panel-head">
+          <span className="compress-panel-title">
+            <Gauge size={15} /> บีบอัดรูปภาพอัตโนมัติสำหรับเว็บไซต์
+          </span>
+          {images.length > 0 ? (
+            <span className="compress-panel-summary">
+              {pending > 0 ? (
+                <>
+                  <LoaderCircle className="spin" size={12} /> กำลังบีบอัด {ready.length}/{images.length} รูป
+                </>
+              ) : (
+                <>
+                  <Check size={12} /> รวม {formatFileSize(originalTotal)} → {" "}
+                  <strong>{formatFileSize(outputTotal)}</strong>
+                </>
+              )}
+            </span>
+          ) : null}
+        </div>
+        <div className="compress-profile-options" role="radiogroup" aria-label="ระดับการบีบอัดรูปภาพ">
+          {(Object.keys(IMAGE_COMPRESSION_PROFILES) as ImageCompressionProfile[]).map((key) => {
+            const active = imageCompressionProfile === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                className={active ? "compress-profile-btn is-active" : "compress-profile-btn"}
+                onClick={() => setImageCompressionProfile(key)}
+              >
+                {active ? <Check size={13} /> : <Images size={13} />}
+                <span>{IMAGE_COMPRESSION_PROFILES[key].label}</span>
+              </button>
+            );
+          })}
+        </div>
+        <small className="compress-panel-hint">
+          ระบบย่อขนาดและบีบอัดภาพ (JPEG คุณภาพสูง) ก่อนบันทึกลง Google Drive โดยคงความคมชัดของตัวอักษร —
+          ภาพทั่วไปไม่เกิน ~200 KB • แบนเนอร์เต็มจอไม่เกิน ~500 KB (สูงสุด 1 MB) • AI ยังอ่านจากภาพต้นฉบับความละเอียดเต็ม
+        </small>
+      </div>
+    );
+  }
+
   function resetUploadFormFields() {
+    forgetCompressedEntries(uploadFiles.map((entry) => entry.id));
     for (const entry of uploadFiles) {
       if (entry.previewUrl) URL.revokeObjectURL(entry.previewUrl);
     }
@@ -1295,6 +1401,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   function removeUploadFileAt(index: number) {
     const target = uploadFiles[index];
     if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+    if (target) forgetCompressedEntries([target.id]);
     const next = uploadFiles.filter((_, idx) => idx !== index);
     setUploadFiles(next);
     if (next.length === 0) {
@@ -1313,8 +1420,9 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     setActiveUploadSlide(0);
   }
 
-  async function uploadSingleAttachment(targetFile: File, meta: { phase: string; category: string; eventDate: string; location: string }): Promise<MediaSlide> {
-    const optimizedFile = await optimizeImageFileForDrive(targetFile);
+  async function uploadSingleAttachment(entry: QueuedUploadFile, meta: { phase: string; category: string; eventDate: string; location: string }): Promise<MediaSlide> {
+    const targetFile = entry.file;
+    const optimizedFile = (await getCompressedEntry(entry)).file;
     const attachmentForm = new FormData();
     attachmentForm.set("mode", "attachment");
     attachmentForm.set("file", optimizedFile);
@@ -1350,8 +1458,8 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       const extraSlides: MediaSlide[] = [];
       if (totalCount > 1) {
         for (let idx = 1; idx < totalCount; idx += 1) {
-          setUploadProgressText(`กำลังปรับแต่งและอัปโหลดรูปภาพที่ ${idx + 1} จาก ${totalCount}...`);
-          const slide = await uploadSingleAttachment(uploadFiles[idx].file, {
+          setUploadProgressText(`กำลังบีบอัดและอัปโหลดรูปภาพที่ ${idx + 1} จาก ${totalCount}...`);
+          const slide = await uploadSingleAttachment(uploadFiles[idx], {
             phase: uploadPhase,
             category: combinedCategory,
             eventDate: uploadEventDate,
@@ -1364,10 +1472,10 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       setUploadProgressText(
         totalCount > 1
           ? `กำลังบันทึกภาพปกและรวมชุดสื่อ (${totalCount} รูปภาพ)...`
-          : "กำลังปรับแต่งรูปภาพและบันทึกลง Google Drive...",
+          : "กำลังบีบอัดรูปภาพให้เหมาะกับเว็บไซต์และบันทึกลง Google Drive...",
       );
 
-      const optimizedPrimaryFile = await optimizeImageFileForDrive(uploadFiles[0].file);
+      const optimizedPrimaryFile = (await getCompressedEntry(uploadFiles[0])).file;
       const data = new FormData();
       data.set("file", optimizedPrimaryFile);
       if (extraSlides.length > 0) {
@@ -1464,6 +1572,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     for (const oldFile of editNewFiles) {
       if (oldFile.previewUrl) URL.revokeObjectURL(oldFile.previewUrl);
     }
+    forgetCompressedEntries(editNewFiles.map((entry) => entry.id));
     setEditNewFiles([]);
     setEditTitle(item.title);
     setEditDescription(item.description);
@@ -1481,6 +1590,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     for (const oldFile of editNewFiles) {
       if (oldFile.previewUrl) URL.revokeObjectURL(oldFile.previewUrl);
     }
+    forgetCompressedEntries(editNewFiles.map((entry) => entry.id));
     setEditNewFiles([]);
     setEditExtraSlides([]);
     setEditCaptionOptions([]);
@@ -1596,6 +1706,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   function removeEditNewFileAt(index: number) {
     const target = editNewFiles[index];
     if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+    if (target) forgetCompressedEntries([target.id]);
     setEditNewFiles((current) => current.filter((_, idx) => idx !== index));
   }
 
@@ -1613,7 +1724,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
 
       const uploadedNewSlides: MediaSlide[] = [];
       for (const entry of editNewFiles) {
-        const slide = await uploadSingleAttachment(entry.file, {
+        const slide = await uploadSingleAttachment(entry, {
           phase: phaseValue,
           category: categoryValue,
           eventDate: eventDateValue,
@@ -3664,9 +3775,10 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                           <div className="upload-slide-fileinfo">
                             <strong>{currentEntry.file.name}</strong>
                             <small>
-                              {(currentEntry.file.size / 1024 / 1024).toFixed(2)} MB • เลือกแล้วทั้งหมด{" "}
+                              ต้นฉบับ {formatFileSize(currentEntry.file.size)} • เลือกแล้วทั้งหมด{" "}
                               {uploadFiles.length} ไฟล์
                             </small>
+                            {renderCompressionBadge(currentEntry)}
                           </div>
                           <div className="dropzone-file-actions">
                             <button
@@ -3703,6 +3815,8 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                           </div>
                         </div>
                       </div>
+
+                      {renderCompressionPicker()}
 
                       <div className="upload-thumbs-strip" aria-label="รายการรูปภาพในสื่อนี้">
                         {uploadFiles.map((entry, idx) => (
@@ -4232,7 +4346,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                     </div>
                   ))}
                   {editNewFiles.map((entry, idx) => (
-                    <div key={entry.id} className="upload-thumb-item is-new" title={`ใหม่: ${entry.file.name}`}>
+                    <div key={entry.id} className="upload-thumb-item is-new" title={`ใหม่: ${entry.file.name}${getCompressionStat(entry) ? ` • ${formatFileSize(getCompressionStat(entry)!.originalBytes)} → ${formatFileSize(getCompressionStat(entry)!.outputBytes)}` : ""}`}>
                       {entry.previewUrl ? (
                         <img src={entry.previewUrl} alt={entry.file.name} />
                       ) : (
@@ -4259,6 +4373,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                     <span>เพิ่มรูป</span>
                   </button>
                 </div>
+                {editNewFiles.length > 0 && renderCompressionPicker(editNewFiles)}
               </div>
 
               {/* AI Review & 3-Style Social Media Caption Generator */}
