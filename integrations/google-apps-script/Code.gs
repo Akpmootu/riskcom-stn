@@ -15,6 +15,7 @@ const SHEET_NAME = "media";
 const USERS_SHEET_NAME = "users";
 const MEDIA_HISTORY_SHEET_NAME = "media_edit_logs";
 const SITE_STATS_SHEET_NAME = "site_stats";
+const SITE_SETTINGS_SHEET_NAME = "site_settings";
 const SUPER_ADMIN_EMAIL = "akaporn1234@gmail.com";
 const HEADERS = [
   "id",
@@ -67,6 +68,7 @@ const MEDIA_HISTORY_HEADERS = [
   "afterJson",
 ];
 const SITE_STATS_HEADERS = ["key", "value", "updatedAt"];
+const SITE_SETTINGS_HEADERS = ["key", "valueJson", "updatedAt", "updatedBy"];
 
 function setupSatunRiskGallery() {
   const resources = ensureResources_();
@@ -122,6 +124,15 @@ function doPost(event) {
     }
     if (payload.action === "trackView") {
       return jsonOutput_({ ok: true, stats: trackVisitorView_(payload) });
+    }
+    if (payload.action === "getSiteSetting") {
+      return jsonOutput_({
+        ok: true,
+        setting: getSiteSetting_(String(payload.key || "")),
+      });
+    }
+    if (payload.action === "saveSiteSetting") {
+      return jsonOutput_({ ok: true, setting: saveSiteSetting_(payload) });
     }
     if (payload.action === "getStats") {
       return jsonOutput_({ ok: true, stats: getVisitorStats_() });
@@ -198,6 +209,10 @@ function ensureResources_() {
   let statsSheet = spreadsheet.getSheetByName(SITE_STATS_SHEET_NAME);
   if (!statsSheet) statsSheet = spreadsheet.insertSheet(SITE_STATS_SHEET_NAME);
   ensureSheetHeaders_(statsSheet, SITE_STATS_HEADERS);
+
+  let settingsSheet = spreadsheet.getSheetByName(SITE_SETTINGS_SHEET_NAME);
+  if (!settingsSheet) settingsSheet = spreadsheet.insertSheet(SITE_SETTINGS_SHEET_NAME);
+  ensureSheetHeaders_(settingsSheet, SITE_SETTINGS_HEADERS);
 
   return {
     folderId: folderId,
@@ -484,6 +499,75 @@ function listMediaHistory_(mediaId) {
       return String(b.editedAt || "").localeCompare(String(a.editedAt || ""));
     })
     .slice(0, 100);
+}
+
+function getSettingsSheet_() {
+  const resources = ensureResources_();
+  const spreadsheet = SpreadsheetApp.openById(resources.spreadsheetId);
+  let sheet = spreadsheet.getSheetByName(SITE_SETTINGS_SHEET_NAME);
+  if (!sheet) {
+    sheet = spreadsheet.insertSheet(SITE_SETTINGS_SHEET_NAME);
+    ensureSheetHeaders_(sheet, SITE_SETTINGS_HEADERS);
+  }
+  return sheet;
+}
+
+function getSiteSetting_(key) {
+  if (!/^[a-z0-9_]{2,60}$/.test(key)) throw new Error("Invalid setting key");
+  const cache = CacheService.getScriptCache();
+  const cacheKey = "site-setting:" + key;
+  const cached = cache.get(cacheKey);
+  if (cached) return JSON.parse(cached);
+  const values = getSettingsSheet_().getDataRange().getValues();
+  for (let index = 1; index < values.length; index += 1) {
+    if (String(values[index][0] || "") === key) {
+      let value = null;
+      try {
+        value = JSON.parse(String(values[index][1] || "null"));
+      } catch (_) {}
+      const setting = {
+        key: key,
+        value: value,
+        updatedAt: String(values[index][2] || ""),
+        updatedBy: String(values[index][3] || ""),
+      };
+      try {
+        cache.put(cacheKey, JSON.stringify(setting), 60);
+      } catch (_) {}
+      return setting;
+    }
+  }
+  return { key: key, value: null, updatedAt: "", updatedBy: "" };
+}
+
+function saveSiteSetting_(payload) {
+  const key = String(payload.key || "");
+  if (!/^[a-z0-9_]{2,60}$/.test(key)) throw new Error("Invalid setting key");
+  const valueJson = JSON.stringify(payload.value === undefined ? null : payload.value);
+  if (valueJson.length > 45000) throw new Error("Setting value is too large");
+  const now = new Date().toISOString();
+  const updatedBy = String(payload.updatedBy || "");
+  const lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    const sheet = getSettingsSheet_();
+    const values = sheet.getDataRange().getValues();
+    let written = false;
+    for (let index = 1; index < values.length; index += 1) {
+      if (String(values[index][0] || "") === key) {
+        sheet.getRange(index + 1, 1, 1, 4).setValues([[key, valueJson, now, updatedBy]]);
+        written = true;
+        break;
+      }
+    }
+    if (!written) sheet.appendRow([key, valueJson, now, updatedBy]);
+  } finally {
+    lock.releaseLock();
+  }
+  try {
+    CacheService.getScriptCache().remove("site-setting:" + key);
+  } catch (_) {}
+  return { key: key, value: JSON.parse(valueJson), updatedAt: now, updatedBy: updatedBy };
 }
 
 function trackVisitorView_(payload) {

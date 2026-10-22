@@ -112,7 +112,7 @@ export default function DevelopersPage() {
           <div className="developer-endpoint-card">
             <span>Base endpoint</span>
             <code>GET /api/v1/media</code>
-            <a href="/api/v1/media?limit=3" target="_blank" rel="noreferrer">
+            <a href="/api/v1/media?limit=3">
               ทดลองเปิด API <ExternalLink size={15} />
             </a>
           </div>

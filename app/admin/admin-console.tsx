@@ -57,6 +57,7 @@ import {
   optimizeThumbnailUrl,
   parseCategories,
   readStoredTagConfigs,
+  resolveTagConfig,
   TAG_COLOR_PRESETS,
   TAG_ICON_PRESETS,
   writeStoredTagConfigs,
@@ -70,6 +71,21 @@ import {
   readAdminMediaCache,
   writeAdminMediaCache,
 } from "../media-cache";
+import {
+  DEFAULT_WATCH_SITUATION,
+  normalizeWatchSituation,
+  readStoredWatchConfig,
+  SEVERITY_META,
+  selectWatchMediaItems,
+  writeStoredWatchConfig,
+  type WatchSeverity,
+  type WatchSituationConfig,
+} from "../lib/watch-situation";
+import {
+  EocFooterPanel,
+  EmergencyHotlines,
+  WatchSituationBanner,
+} from "../components/public-safety";
 import type {
   IncidentPhase,
   MediaItem,
@@ -316,7 +332,10 @@ const DEFAULT_CATEGORIES = [
 
 export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"library" | "settings">("library");
+  const [activeTab, setActiveTab] = useState<"library" | "settings" | "watch">("library");
+  const [watchConfig, setWatchConfig] = useState<WatchSituationConfig>(DEFAULT_WATCH_SITUATION);
+  const [watchDraft, setWatchDraft] = useState<WatchSituationConfig>(DEFAULT_WATCH_SITUATION);
+  const [watchSaving, setWatchSaving] = useState(false);
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [checking, setChecking] = useState(true);
   const [items, setItems] = useState<MediaItem[]>([]);
@@ -380,10 +399,61 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [editingTagIcon, setEditingTagIcon] = useState(TAG_ICON_PRESETS[0].icon);
   const [addingCategory, setAddingCategory] = useState(false);
   const [categoryMessage, setCategoryMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [watchMessage, setWatchMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const fileInput = useRef<HTMLInputElement>(null);
   const editFileInput = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Load watch situation config
+  useEffect(() => {
+    const stored = readStoredWatchConfig();
+    if (stored) {
+      setWatchConfig(stored);
+      setWatchDraft(stored);
+    }
+    fetch("/api/watch-situation")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { ok?: boolean; config?: Partial<WatchSituationConfig> } | null) => {
+        if (data?.config) {
+          const normalized = normalizeWatchSituation(data.config);
+          setWatchConfig(normalized);
+          setWatchDraft(normalized);
+          writeStoredWatchConfig(normalized);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const handleSaveWatchSituation = async () => {
+    setWatchSaving(true);
+    try {
+      const updated: WatchSituationConfig = {
+        ...watchDraft,
+        updatedAt: new Date().toISOString(),
+        updatedBy: [currentUser.firstName, currentUser.lastName].filter(Boolean).join(" ") || currentUser.email || "ผู้ดูแลระบบ",
+      };
+      const res = await fetch("/api/watch-situation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config: updated }),
+      });
+      const data = await res.json();
+      if (data.ok && data.config) {
+        const saved = normalizeWatchSituation(data.config);
+        setWatchConfig(saved);
+        setWatchDraft(saved);
+        writeStoredWatchConfig(saved);
+        setWatchMessage({ type: "success", text: "บันทึกการตั้งค่าสถานการณ์เฝ้าระวังเรียบร้อยแล้ว" });
+      } else {
+        setWatchMessage({ type: "error", text: data.message || "เกิดข้อผิดพลาดในการบันทึก" });
+      }
+    } catch {
+      setWatchMessage({ type: "error", text: "ไม่สามารถเชื่อมต่อเพื่อบันทึกสถานการณ์ได้" });
+    } finally {
+      setWatchSaving(false);
+    }
+  };
 
   useEffect(() => {
     // 1. Instant client-side hydration from indexed localStorage cache
@@ -1514,6 +1584,17 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
               <span>จัดการข้อมูลพื้นฐาน</span>
               <span className="tab-badge">{categories.length} ประเภท</span>
             </button>
+            <button
+              type="button"
+              className={activeTab === "watch" ? "admin-tab-button is-active" : "admin-tab-button"}
+              onClick={() => setActiveTab("watch")}
+            >
+              <i className="fa-solid fa-tower-broadcast" style={{ fontSize: 16 }} />
+              <span>สถานการณ์เฝ้าระวัง</span>
+              <span className={`tab-badge ${watchConfig.enabled ? "badge-live" : ""}`}>
+                {watchConfig.enabled ? "เปิดใช้งาน" : "ปิด"}
+              </span>
+            </button>
           </nav>
 
           <div className="admin-title-actions">
@@ -1834,7 +1915,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
               </nav>
             )}
           </section>
-        ) : (
+        ) : activeTab === "settings" ? (
           <section className="basic-settings-panel" aria-label="จัดการข้อมูลพื้นฐาน">
             <div className="panel-heading">
               <div className="panel-heading-main">
@@ -2134,6 +2215,301 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
               </article>
             </div>
           </section>
+        ) : (
+          <section className="watch-admin-panel" aria-label="จัดการสถานการณ์เฝ้าระวัง">
+            <div className="panel-heading">
+              <div className="panel-heading-main">
+                <span className="panel-badge-pill">
+                  <i className="fa-solid fa-tower-broadcast" aria-hidden="true" style={{ color: "#0284c7" }} />
+                  ศูนย์ข้อมูลสถานการณ์เฝ้าระวัง (Citizen Surveillance Control)
+                </span>
+                <h2>กำหนดและจัดการสถานการณ์ที่ต้องเฝ้าระวัง</h2>
+                <p>
+                  กำหนดเหตุการณ์สำคัญที่ต้องเฝ้าระวังในสตูล เช่น น้ำท่วม โรคติดต่อ หรือภัยสุขภาพ เพื่อให้ประชาชนตระหนักรู้และรับมือได้ทันท่วงที
+                </p>
+              </div>
+              <div className="panel-heading-actions">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={handleSaveWatchSituation}
+                  disabled={watchSaving}
+                >
+                  <Save size={16} /> {watchSaving ? "กำลังบันทึก..." : "บันทึกการตั้งค่าเฝ้าระวัง"}
+                </button>
+              </div>
+            </div>
+
+            {watchMessage && (
+              <div className={watchMessage.type === "success" ? "admin-feedback-banner success" : "admin-feedback-banner error"}>
+                {watchMessage.type === "success" ? <Check size={16} /> : <AlertTriangle size={16} />}
+                <span>{watchMessage.text}</span>
+              </div>
+            )}
+
+            <div className="watch-admin-grid">
+              <div className="watch-admin-form-col">
+                <article className="settings-card">
+                  <div className="settings-card-head">
+                    <span className="card-icon">
+                      <i className="fa-solid fa-power-off" aria-hidden="true" />
+                    </span>
+                    <div>
+                      <h3>สถานะและการแจ้งเตือน (Status & Level)</h3>
+                      <p>ควบคุมการแสดงผลแบนเนอร์เฝ้าระวังบนหน้าแรก และระดับความรุนแรง</p>
+                    </div>
+                  </div>
+
+                  <div className="watch-control-row">
+                    <label className="watch-toggle-label">
+                      <input
+                        type="checkbox"
+                        checked={watchDraft.enabled}
+                        onChange={(e) => setWatchDraft({ ...watchDraft, enabled: e.target.checked })}
+                      />
+                      <span className="watch-toggle-slider" />
+                      <span className="watch-toggle-text">
+                        <strong>{watchDraft.enabled ? "เปิดแสดงบนหน้าแรก (ACTIVE)" : "ปิดการแสดงผล (HIDDEN)"}</strong>
+                        <small>{watchDraft.enabled ? "ประชาชนที่เข้าหน้าเว็บจะเห็นกล่องเฝ้าระวังนี้ทันที" : "ซ่อนกล่องเฝ้าระวังจากหน้าแรก"}</small>
+                      </span>
+                    </label>
+                  </div>
+
+                  <div className="watch-field-group">
+                    <label className="field-label">ระดับความรุนแรง / สถานะการเฝ้าระวัง :</label>
+                    <div className="watch-severity-selector">
+                      {(["watch", "warning", "critical"] as WatchSeverity[]).map((sev) => {
+                        const meta = SEVERITY_META[sev];
+                        const isSelected = watchDraft.severity === sev;
+                        return (
+                          <button
+                            key={sev}
+                            type="button"
+                            className={`severity-option-btn severity-${sev}${isSelected ? " is-active" : ""}`}
+                            onClick={() => setWatchDraft({ ...watchDraft, severity: sev })}
+                          >
+                            <i className={meta.icon} aria-hidden="true" />
+                            <strong>{meta.badgeText}</strong>
+                            <small>{sev === "watch" ? "ระดับปกติ" : sev === "warning" ? "ระดับเฝ้าระวังใกล้ชิด" : "ระดับฉุกเฉินวิกฤต"}</small>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </article>
+
+                <article className="settings-card">
+                  <div className="settings-card-head">
+                    <span className="card-icon">
+                      <i className="fa-solid fa-bullhorn" aria-hidden="true" />
+                    </span>
+                    <div>
+                      <h3>ข้อมูลสถานการณ์ (Situation Content)</h3>
+                      <p>ข้อความหัวข้อ สรุปสถานการณ์ พื้นที่ และหมวดหมู่ที่เกี่ยวข้อง</p>
+                    </div>
+                  </div>
+
+                  <div className="watch-field-group">
+                    <label className="field-label" htmlFor="watch-title-input">หัวข้อสถานการณ์เฝ้าระวัง *</label>
+                    <input
+                      id="watch-title-input"
+                      className="admin-input-text"
+                      value={watchDraft.title}
+                      onChange={(e) => setWatchDraft({ ...watchDraft, title: e.target.value })}
+                      placeholder="เช่น เฝ้าระวังสถานการณ์ฝนตกหนัก น้ำท่วมฉับพลัน และโรคที่มากับน้ำ"
+                    />
+                  </div>
+
+                  <div className="watch-field-group">
+                    <label className="field-label" htmlFor="watch-subtitle-input">สรุปสถานการณ์ / คำเตือนเบื้องต้น</label>
+                    <textarea
+                      id="watch-subtitle-input"
+                      className="admin-textarea"
+                      rows={2}
+                      value={watchDraft.subtitle}
+                      onChange={(e) => setWatchDraft({ ...watchDraft, subtitle: e.target.value })}
+                      placeholder="สรุปสาระสำคัญ เพื่อให้ประชาชนเข้าใจสถานการณ์ได้เร็วที่สุด"
+                    />
+                  </div>
+
+                  <div className="admin-form-row">
+                    <div className="watch-field-group" style={{ flex: 1 }}>
+                      <label className="field-label" htmlFor="watch-loc-input">พื้นที่เฝ้าระวัง</label>
+                      <input
+                        id="watch-loc-input"
+                        className="admin-input-text"
+                        value={watchDraft.location}
+                        onChange={(e) => setWatchDraft({ ...watchDraft, location: e.target.value })}
+                        placeholder="เช่น ทุกอำเภอในจังหวัดสตูล หรือ อ.ละงู, อ.ควนโดน"
+                      />
+                    </div>
+                    <div className="watch-field-group" style={{ flex: 1 }}>
+                      <label className="field-label" htmlFor="watch-phase-select">ช่วงเหตุการณ์</label>
+                      <select
+                        id="watch-phase-select"
+                        className="admin-select"
+                        value={watchDraft.phase}
+                        onChange={(e) => setWatchDraft({ ...watchDraft, phase: e.target.value as any })}
+                      >
+                        <option value="all">ทุกช่วงเหตุการณ์</option>
+                        <option value="before">ก่อนเกิดเหตุ (01)</option>
+                        <option value="during">ระหว่างเกิดเหตุ (02)</option>
+                        <option value="after">หลังเกิดเหตุ (03)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="watch-field-group">
+                    <label className="field-label">ประเภทเหตุการณ์ / Tag ที่เกี่ยวข้อง (เลือกได้มากกว่า 1) :</label>
+                    <div className="watch-category-tags">
+                      {categories.map((catName) => {
+                        const isSelected = watchDraft.categories.includes(catName);
+                        const cfg = resolveTagConfig(catName, tagConfigs);
+                        return (
+                          <button
+                            key={catName}
+                            type="button"
+                            className={`watch-tag-chip${isSelected ? " is-selected" : ""}`}
+                            style={{
+                              backgroundColor: isSelected ? cfg.bgColor : "#f8fafc",
+                              color: isSelected ? cfg.textColor : "#64748b",
+                              borderColor: isSelected ? cfg.borderColor : "#cbd5e1",
+                            }}
+                            onClick={() => {
+                              const next = isSelected
+                                ? watchDraft.categories.filter((c) => c !== catName)
+                                : [...watchDraft.categories, catName];
+                              setWatchDraft({ ...watchDraft, categories: next });
+                            }}
+                          >
+                            <i className={cfg.icon} aria-hidden="true" />
+                            <span>{catName}</span>
+                            {isSelected ? <Check size={14} /> : <Plus size={14} />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="watch-field-group">
+                    <label className="field-label" htmlFor="watch-advisory-input">
+                      คำแนะนำสำหรับประชาชน (Bullet points พร้อมอิโมจิ)
+                    </label>
+                    <textarea
+                      id="watch-advisory-input"
+                      className="admin-textarea"
+                      rows={5}
+                      value={watchDraft.advisoryText}
+                      onChange={(e) => setWatchDraft({ ...watchDraft, advisoryText: e.target.value })}
+                      placeholder="• 🌧️ ติดตามพยากรณ์อากาศและระดับน้ำต่อเนื่อง&#10;• 🛡️ หลีกเลี่ยงการเดินลุยน้ำขังด้วยเท้าเปล่า&#10;• 🦟 กำจัดแหล่งเพาะพันธุ์ยุงลาย"
+                    />
+                    <small className="field-hint">
+                      พิมพ์ข้อความบรรทัดละ 1 ข้อความแนะนำ ระบบจะแปลงเป็นรายการข้อปฏิบัติพร้อมจุดเด่นอัตโนมัติ
+                    </small>
+                  </div>
+                </article>
+
+                <article className="settings-card">
+                  <div className="settings-card-head">
+                    <span className="card-icon">
+                      <i className="fa-solid fa-photo-film" aria-hidden="true" />
+                    </span>
+                    <div>
+                      <h3>สื่อแนะนำในสถานการณ์นี้ (Recommended Media)</h3>
+                      <p>เลือกสื่อจากคลัง (สูงสุด 4 รายการ) ที่ต้องการให้ประชาชนเห็นเป็นพิเศษ</p>
+                    </div>
+                  </div>
+
+                  <div className="pinned-media-manager">
+                    <div className="pinned-media-selector">
+                      <label className="field-label" htmlFor="pinned-media-select">เพิ่มสื่อเข้าสถานการณ์ :</label>
+                      <select
+                        id="pinned-media-select"
+                        className="admin-select"
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          if (!id) return;
+                          if (!watchDraft.pinnedMediaIds.includes(id)) {
+                            setWatchDraft({
+                              ...watchDraft,
+                              pinnedMediaIds: [...watchDraft.pinnedMediaIds, id],
+                            });
+                          }
+                          e.target.value = "";
+                        }}
+                        defaultValue=""
+                      >
+                        <option value="">-- เลือกสื่อจากคลังเพื่อปักหมุด --</option>
+                        {items.map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.title} ({item.location || "สตูล"})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="pinned-media-list">
+                      {watchDraft.pinnedMediaIds.length === 0 ? (
+                        <p className="empty-pinned-note">
+                          ยังไม่ได้ระบุสื่อเฉพาะเจาะจง (ระบบจะเลือกสื่อที่ตรงกับประเภทเหตุการณ์และช่วงเวลาให้อัตโนมัติ)
+                        </p>
+                      ) : (
+                        watchDraft.pinnedMediaIds.map((id) => {
+                          const item = items.find((i) => i.id === id);
+                          return (
+                            <div key={id} className="pinned-item-row">
+                              <span>
+                                <i className="fa-solid fa-thumbtack" style={{ color: "#0284c7", marginRight: 8 }} />
+                                <strong>{item ? item.title : `รหัสสื่อ: ${id}`}</strong>
+                              </span>
+                              <button
+                                type="button"
+                                className="pinned-remove-btn"
+                                onClick={() =>
+                                  setWatchDraft({
+                                    ...watchDraft,
+                                    pinnedMediaIds: watchDraft.pinnedMediaIds.filter((pId) => pId !== id),
+                                  })
+                                }
+                                title="ลบออกจากสื่อแนะนำ"
+                              >
+                                <X size={15} /> ลบ
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                </article>
+              </div>
+
+              <div className="watch-admin-preview-col">
+                <article className="settings-card sticky-preview-card">
+                  <div className="settings-card-head">
+                    <span className="card-icon">
+                      <Eye size={20} />
+                    </span>
+                    <div>
+                      <h3>พรีวิวการแสดงผลจริงบนหน้าแรก</h3>
+                      <p>หน้าตาของกล่องสถานการณ์เฝ้าระวังที่ประชาชนจะมองเห็น</p>
+                    </div>
+                  </div>
+
+                  <div className="preview-container-box">
+                    <WatchSituationBanner
+                      config={watchDraft}
+                      mediaItems={selectWatchMediaItems(items, watchDraft, 4)}
+                      tagConfigs={tagConfigs}
+                      onOpenMedia={() => {}}
+                      onOpenService={() => {}}
+                      onViewAll={() => {}}
+                    />
+                  </div>
+                </article>
+              </div>
+            </div>
+          </section>
         )}
       </div>
 
@@ -2166,6 +2542,8 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
           </div>
         </div>
       </section>
+
+      <EocFooterPanel />
 
       <footer className="site-footer">
         <div className="container footer-grid">
@@ -3129,8 +3507,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                           <a
                             className="ai-reanalyze-btn"
                             href={activeSlide.downloadUrl || activeSlide.thumbnailUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                            download
                           >
                             <Maximize2 size={14} /> เปิดไฟล์เต็ม / ดาวน์โหลด
                           </a>

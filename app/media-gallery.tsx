@@ -44,6 +44,21 @@ import {
   normalizeMediaItems,
 } from "./lib/media-gallery-utils";
 import {
+  DEFAULT_WATCH_SITUATION,
+  normalizeWatchSituation,
+  readStoredWatchConfig,
+  selectWatchMediaItems,
+  writeStoredWatchConfig,
+  type WatchSituationConfig,
+} from "./lib/watch-situation";
+import {
+  EocFooterPanel,
+  PublicServiceBar,
+  PublicServiceViewer,
+  WatchSituationBanner,
+  type PublicServiceId,
+} from "./components/public-safety";
+import {
   readMediaCache,
   writeMediaCache,
 } from "./media-cache";
@@ -348,6 +363,8 @@ export function MediaGallerySkeleton() {
         </div>
       </section>
 
+      <EocFooterPanel />
+
       <footer className="site-footer">
         <div className="container footer-grid">
           <div className="footer-brand">
@@ -398,6 +415,8 @@ export function MediaGallery() {
   const [featuredList, setFeaturedList] = useState<MediaItem[]>([]);
   const [featuredIndex, setFeaturedIndex] = useState(0);
   const [tagConfigs, setTagConfigs] = useState<CategoryTagConfig[]>([]);
+  const [watchConfig, setWatchConfig] = useState<WatchSituationConfig>(DEFAULT_WATCH_SITUATION);
+  const [activeService, setActiveService] = useState<PublicServiceId | null>(null);
   const touchStartX = useRef<number | null>(null);
 
   useEffect(() => {
@@ -412,6 +431,25 @@ export function MediaGallery() {
         }
       })
       .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    const storedWatch = readStoredWatchConfig();
+    if (storedWatch) setWatchConfig(storedWatch);
+    let active = true;
+    fetch("/api/watch-situation")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { ok?: boolean; config?: Partial<WatchSituationConfig> } | null) => {
+        if (active && data?.config) {
+          const normalized = normalizeWatchSituation(data.config);
+          setWatchConfig(normalized);
+          writeStoredWatchConfig(normalized);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
   }, []);
 
   const applyMediaResponse = useCallback(
@@ -643,6 +681,10 @@ export function MediaGallery() {
     () => (featured ? getMediaSlides(featured) : []),
     [featured],
   );
+  const matchingWatchItems = useMemo(
+    () => selectWatchMediaItems(items, watchConfig, 4),
+    [items, watchConfig],
+  );
 
   async function refreshMedia() {
     if (refreshing) return;
@@ -795,6 +837,14 @@ export function MediaGallery() {
                 ))}
               </div>
             </div>
+
+            <div className="hero-public-services" aria-label="บริการด่วนสำหรับประชาชน">
+              <span className="hero-services-kicker">
+                <i className="fa-solid fa-bell" aria-hidden="true" style={{ marginRight: 6 }} />
+                บริการด่วนสำหรับประชาชน & ศูนย์ EOC
+              </span>
+              <PublicServiceBar onOpen={(serviceId) => setActiveService(serviceId)} />
+            </div>
           </div>
 
           <div className="hero-panel">
@@ -944,6 +994,26 @@ export function MediaGallery() {
           </div>
         </div>
       </section>
+
+      <WatchSituationBanner
+        config={watchConfig}
+        mediaItems={matchingWatchItems}
+        tagConfigs={tagConfigs}
+        onOpenMedia={(item) => {
+          setSelected(item);
+          setSelectedSlideIndex(0);
+        }}
+        onOpenService={(serviceId) => setActiveService(serviceId)}
+        onViewAll={() => {
+          if (watchConfig.phase !== "all") {
+            setPhase(watchConfig.phase);
+          }
+          if (watchConfig.categories.length > 0) {
+            setCategory(watchConfig.categories[0]);
+          }
+          jumpToGallery();
+        }}
+      />
 
       {sourceMessage && (source === "demo" || showingCachedData) && (
         <div className={showingCachedData ? "container demo-notice cache-notice" : "container demo-notice"} role="status">
@@ -1343,6 +1413,8 @@ export function MediaGallery() {
         </div>
       </section>
 
+      <EocFooterPanel />
+
       <footer className="site-footer">
         <div className="container footer-grid">
           <div className="footer-brand">
@@ -1627,6 +1699,8 @@ export function MediaGallery() {
           </div>
         );
       })()}
+
+      <PublicServiceViewer serviceId={activeService} onClose={() => setActiveService(null)} />
 
       {toast && <div className="toast" role="status"><Check size={17} /> {toast}</div>}
     </main>
