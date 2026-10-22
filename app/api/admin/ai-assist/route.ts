@@ -117,6 +117,31 @@ function normalizeCaptionOptions(
   ];
 }
 
+async function fetchAsDataUrl(url: string): Promise<string> {
+  if (!url || url.startsWith("data:image/")) return url;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+      },
+    });
+    if (res.ok) {
+      const cType = res.headers.get("content-type") || "image/jpeg";
+      const mime = cType.split(";")[0].trim();
+      const arr = await res.arrayBuffer();
+      const buf = Buffer.from(arr);
+      if (buf.length > 0 && buf.length < 6 * 1024 * 1024) {
+        return `data:${mime};base64,${buf.toString("base64")}`;
+      }
+    }
+  } catch (err) {
+    console.warn("fetchAsDataUrl failed:", err);
+  }
+  return url;
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
@@ -150,12 +175,12 @@ export async function POST(request: Request) {
     let extractedText = "";
 
     // Step 1: Extract text and visual context from image using Typhoon OCR
-    const targetImageForOcr =
-      imageDataUrl && imageDataUrl.startsWith("data:image/")
-        ? imageDataUrl
-        : imageUrl && (imageUrl.startsWith("http") || imageUrl.startsWith("data:image/"))
-          ? imageUrl
-          : "";
+    let targetImageForOcr = "";
+    if (imageDataUrl && imageDataUrl.startsWith("data:image/")) {
+      targetImageForOcr = imageDataUrl;
+    } else if (imageUrl) {
+      targetImageForOcr = await fetchAsDataUrl(imageUrl);
+    }
 
     if (targetImageForOcr) {
       try {
@@ -173,7 +198,7 @@ export async function POST(request: Request) {
                 content: [
                   {
                     type: "text",
-                    text: "อ่านข้อความภาษาไทยและภาษาอังกฤษทั้งหมดในภาพอินโฟกราฟิก/โปสเตอร์นี้อย่างละเอียด พร้อมอธิบายองค์ประกอบภาพและใจความสำคัญ",
+                    text: "อ่านข้อความภาษาไทยและภาษาอังกฤษทั้งหมดในภาพอินโฟกราฟิก/โปสเตอร์นี้อย่างละเอียดและครบถ้วน พร้อมสรุปองค์ประกอบภาพและข้อความสำคัญ",
                   },
                   {
                     type: "image_url",
@@ -201,18 +226,30 @@ export async function POST(request: Request) {
     // Step 2: Content Marketing & Copywriter Specialist Instruction
     const prompt = `คุณคือผู้เชี่ยวชาญด้าน Content Marketing และ Copywriter มืออาชีพที่เชี่ยวชาญการเขียนแคปชั่นบน Social Media (เช่น Facebook, Line OA, Twitter/X, TikTok) ให้กับสำนักงานสาธารณสุขจังหวัดสตูล
 
-Task: ช่วยวิเคราะห์ภาพและเขียนแคปชั่นสำหรับโพสต์สื่อสารความเสี่ยงและประชาสัมพันธ์ด้านสุขภาพ
+Task: ช่วยวิเคราะห์ภาพจริงที่แนบมานี้ และเขียนแคปชั่นสำหรับโพสต์ประชาสัมพันธ์/สื่อสารความเสี่ยงด้านสุขภาพ
+⚠️ กฎเหล็กสำคัญ:
+1. การคิดของ AI ต้องสอดคล้องกับภาพจริง: ต้องอิงเนื้อหาจากข้อความในภาพ (OCR) และรายละเอียดภาพด้านล่างนี้เป็นหลัก ห้ามสมมุติหรือมโนเรื่องที่ไม่ปรากฏในภาพเด็ดขาด
+2. สรุปข้อมูลให้สั้นและเข้าใจได้ง่ายทันที: ผู้อ่านและประชาชนต้องการอ่านแล้วเข้าใจทันที ไม่ต้องบรรยายยาวเป็นพารากราฟ
+3. ภาษามืออาชีพแต่ทันสมัย: ใช้ภาษาที่เป็นทางการ น่าเชื่อถือ แต่ผสมผสานคำสมัยใหม่ (Trendy words) หรือคำติดปาก เพื่อไม่ให้ดูน่าเบื่อ เข้าถึงวัยรุ่นและประชาชนได้จริง
+4. Formatting & Elements:
+   - Emoji: เลือกใช้อิโมจิที่ตรงกับเนื้อหา ตกแต่งให้อ่านง่าย สบายตา
+   - Bullet points: สรุปประเด็นสำคัญเป็นข้อๆ โดยใช้ • นำหน้าแต่ละข้อ
+   - การไฮไลต์: ใส่เครื่องหมาย **...** ล้อมรอบคำหรือข้อความที่ต้องการย้ำเตือนอย่างชัดเจน เช่น **ห้ามเดินลุยน้ำเท้าเปล่า**, **โทร 1669 ทันที**
+   - Hashtags: แฮชแท็กที่ตรงกับเนื้อหา 3-5 คำ (เช่น #สาธารณสุขสตูล #เตือนภัยสุขภาพ #สตูลปลอดภัย)
+
 ข้อมูลภาพและเนื้อหาประกอบ:
 - ชื่อสื่อ/หัวข้อเดิม: ${currentTitle || "ไม่ระบุ"}
 - เนื้อหาเดิม: ${currentDescription || "ไม่ระบุ"}
-- รายละเอียดและข้อความที่อ่านได้จากภาพ:
+- รายละเอียดและข้อความที่ตรวจพบในภาพจริง:
 """
 ${extractedText || currentTitle || fileName || "ไม่มีข้อความเพิ่มเติม"}
 """
 - หมวดหมู่เหตุการณ์ในระบบ: ${availableCategories.join(", ")}
 
-Tone & Style:
-1. สั้น กระชับ ดึงดูด: ความยาวไม่เกิน 3-4 บรรทัด หรือ Bullet points สั้นกระชับ เน้นประโยคเปิด (Hook) ที่กระตุกสายตาให้คนหยุดอ่านทันที เนื้อหาเคลียร์ อ่านรอบเดียวเข้าใจทันที ไม่ต้องบรรยายยาวเป็นพารากราฟ
+Tone & Style ของแคปชั่น 3 สไตล์:
+1. สไตล์ที่ 1: "สั้น กระตุกสายตา (Hook & Punchy)" — เน้นประโยคเปิด Hook กระตุกสายตา สั้น กระชับ ฉับไวใน 3 วินาที
+2. สไตล์ที่ 2: "ห่วงใย ใส่ใจ เตือนภัย (Caring & Actionable)" — เน้นความห่วงใย ชี้จุดเสี่ยงและบอกวิธีป้องกันแบบทำตามได้ทันที
+3. สไตล์ที่ 3: "ทันสมัย ชวนแชร์ ภาษาคนรุ่นใหม่ (Trendy & Engaging)" — ภาษากระฉับกระเฉง ชวนกดเซฟและแชร์ต่อให้คนที่รัก
 2. ภาษามืออาชีพแต่ทันสมัย: ใช้ภาษาที่เป็นทางการ น่าเชื่อถือ แต่ผสมผสานคำสมัยใหม่ (Trendy words) หรือคำติดปาก เพื่อไม่ให้ดูน่าเบื่อ เข้าถึงวัยรุ่นและประชาชนได้จริง
 3. Formatting & Elements:
    - Emoji: เลือกใช้อิโมจิที่ตรงกับเนื้อหา ตกแต่งให้สวยงาม สบายตา ช่วยแบ่งสัดส่วนเนื้อหาให้เปิดอ่านง่าย

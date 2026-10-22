@@ -137,6 +137,7 @@ type AiSuggestionResponse = {
     keywords: string[];
     location: string;
     extractedText?: string;
+    captionOptions?: CaptionOption[];
   };
 };
 
@@ -422,6 +423,9 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const [editingTagColor, setEditingTagColor] = useState(TAG_COLOR_PRESETS[0].color);
   const [editingTagIcon, setEditingTagIcon] = useState(TAG_ICON_PRESETS[0].icon);
   const [addingCategory, setAddingCategory] = useState(false);
+  const [analyzingTagIcon, setAnalyzingTagIcon] = useState(false);
+  const [uploadCaptionOptions, setUploadCaptionOptions] = useState<CaptionOption[]>([]);
+  const [selectedUploadCaptionIdx, setSelectedUploadCaptionIdx] = useState<number | null>(null);
   const [categoryMessage, setCategoryMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [watchMessage, setWatchMessage] = useState<{ type: "success" | "error" | "warning"; text: string } | null>(null);
   const [recMediaSearch, setRecMediaSearch] = useState("");
@@ -619,6 +623,18 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   };
 
   useEffect(() => {
+    // 0. Filter out browser extension message channel disconnect warnings
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const msg = typeof event?.reason?.message === "string" ? event.reason.message : "";
+      if (
+        msg.includes("message channel closed before a response was received") ||
+        msg.includes("listener indicated an asynchronous response")
+      ) {
+        event.preventDefault();
+      }
+    };
+    window.addEventListener("unhandledrejection", handleUnhandledRejection);
+
     // 1. Instant client-side hydration from indexed localStorage cache
     const cachedTags = readStoredTagConfigs();
     if (cachedTags && cachedTags.length > 0) {
@@ -642,6 +658,10 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     ]).finally(() => {
       setHydrating(false);
     });
+
+    return () => {
+      window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+    };
     // Initial portal data is intentionally loaded once for the authenticated user.
   }, []);
 
@@ -663,24 +683,8 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
 
   async function loadCategories(localStored?: CategoryTagConfig[] | null) {
     try {
-      if (localStored && localStored.length > 0) {
-        const syncRes = await fetch("/api/admin/categories", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ action: "sync", tagConfigs: localStored }),
-        });
-        if (syncRes.ok) {
-          const syncResult = (await syncRes.json()) as {
-            tagConfigs?: CategoryTagConfig[];
-          };
-          if (Array.isArray(syncResult.tagConfigs) && syncResult.tagConfigs.length > 0) {
-            setTagConfigs(syncResult.tagConfigs);
-            writeStoredTagConfigs(syncResult.tagConfigs);
-            return;
-          }
-        }
-      }
-      const response = await fetch("/api/admin/categories");
+      // Fetch latest tags from Google Sheets database
+      const response = await fetch("/api/admin/categories", { cache: "no-store" });
       if (response.ok) {
         const result = (await response.json()) as {
           categories?: string[];
@@ -689,14 +693,23 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
         if (Array.isArray(result.tagConfigs) && result.tagConfigs.length > 0) {
           setTagConfigs(result.tagConfigs);
           writeStoredTagConfigs(result.tagConfigs);
+          return;
         } else if (Array.isArray(result.categories) && result.categories.length > 0) {
           const mapped = result.categories.map((name) => buildTagConfigFromColor(name));
           setTagConfigs(mapped);
           writeStoredTagConfigs(mapped);
+          return;
         }
       }
+
+      // If server unreachable, fallback to client-side localStorage
+      if (localStored && localStored.length > 0) {
+        setTagConfigs(localStored);
+      }
     } catch {
-      // Fallback gracefully
+      if (localStored && localStored.length > 0) {
+        setTagConfigs(localStored);
+      }
     }
   }
 
@@ -844,6 +857,59 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       }
     } catch {
       // Ignore error
+    }
+  }
+
+  async function handleAiSuggestTagIcon(mode: "create" | "edit") {
+    const targetName = mode === "create" ? newCategoryName.trim() : editingTagName.trim();
+    if (!targetName) {
+      setCategoryMessage({
+        type: "error",
+        text: "กรุณาระบุชื่อ Tag ก่อนเพื่อให้ AI วิเคราะห์ไอคอน Font Awesome",
+      });
+      return;
+    }
+
+    setAnalyzingTagIcon(true);
+    setCategoryMessage(null);
+
+    try {
+      const res = await fetch("/api/admin/categories", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "suggestIcon", name: targetName }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        icon?: string;
+        color?: string;
+        reason?: string;
+        error?: string;
+      };
+
+      if (!res.ok || !data.ok || !data.icon) {
+        throw new Error(data.error || "ไม่สามารถวิเคราะห์ไอคอนได้");
+      }
+
+      if (mode === "create") {
+        setNewCategoryIcon(data.icon);
+        if (data.color) setNewCategoryColor(data.color);
+      } else {
+        setEditingTagIcon(data.icon);
+        if (data.color) setEditingTagColor(data.color);
+      }
+
+      setCategoryMessage({
+        type: "success",
+        text: `✨ AI วิเคราะห์ไอคอนสำเร็จ: เลือก ${data.icon} ${data.reason ? `(${data.reason})` : ""}`,
+      });
+    } catch (err) {
+      setCategoryMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "ไม่สามารถให้ AI วิเคราะห์ไอคอนได้",
+      });
+    } finally {
+      setAnalyzingTagIcon(false);
     }
   }
 
@@ -1092,8 +1158,19 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
     setUploadAltText("");
     setUploadKeywords("");
     setUploadStatus("published");
+    setUploadCaptionOptions([]);
+    setSelectedUploadCaptionIdx(null);
     if (fileInput.current) fileInput.current.value = "";
   }
+
+  const applyUploadCaptionOption = (opt: CaptionOption, idx: number) => {
+    setSelectedUploadCaptionIdx(idx);
+    if (opt.title) setUploadTitle(opt.title);
+    if (opt.caption) setUploadDescription(opt.caption);
+    if (opt.hashtags && opt.hashtags.length > 0) {
+      setUploadKeywords(opt.hashtags.join(", "));
+    }
+  };
 
   async function analyzeFileWithAi(targetFile: File) {
     setAiAnalyzing(true);
@@ -1139,6 +1216,15 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
       }
       if (suggestion.location) setUploadLocation(suggestion.location);
       if (!uploadEventDate) setUploadEventDate(todayIsoDate());
+
+      if (
+        suggestion.captionOptions &&
+        Array.isArray(suggestion.captionOptions) &&
+        suggestion.captionOptions.length > 0
+      ) {
+        setUploadCaptionOptions(suggestion.captionOptions);
+        setSelectedUploadCaptionIdx(0);
+      }
 
       setAiStatusMessage({
         type: "success",
@@ -1405,12 +1491,21 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
         });
       }
 
+      const resolvedImageUrl =
+        !imageDataUrl
+          ? editing.thumbnailUrl ||
+            editing.downloadUrl ||
+            editExtraSlides[0]?.thumbnailUrl ||
+            editExtraSlides[0]?.downloadUrl ||
+            undefined
+          : undefined;
+
       const res = await fetch("/api/admin/ai-assist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           imageDataUrl: imageDataUrl || undefined,
-          imageUrl: !imageDataUrl ? (editing.thumbnailUrl || editing.downloadUrl) : undefined,
+          imageUrl: resolvedImageUrl,
           fileName: editing.fileName,
           currentTitle: editTitle || editing.title,
           currentDescription: editDescription || editing.description,
@@ -2218,6 +2313,25 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                     </button>
                   </div>
 
+                  <div className="add-category-ai-bar">
+                    <button
+                      type="button"
+                      className="tag-ai-suggest-btn"
+                      disabled={addingCategory || analyzingTagIcon || !newCategoryName.trim()}
+                      onClick={() => void handleAiSuggestTagIcon("create")}
+                      title="ให้ AI วิเคราะห์ชื่อ Tag และเลือกไอคอน Font Awesome 6 พร้อมสีที่เหมาะสมโดยอัตโนมัติ"
+                    >
+                      {analyzingTagIcon ? <LoaderCircle className="spin" size={14} /> : <Sparkles size={14} />}
+                      <span>{analyzingTagIcon ? "AI กำลังวิเคราะห์ไอคอน..." : "🪄 ให้ AI วิเคราะห์ไอคอน Font Awesome"}</span>
+                    </button>
+                    {newCategoryIcon && (
+                      <div className="tag-current-icon-pill">
+                        <i className={newCategoryIcon} aria-hidden="true" style={{ color: newCategoryColor }} />
+                        <span>{newCategoryIcon}</span>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="tag-customizer-row">
                     <div className="tag-color-picker-group">
                       <span className="tag-customizer-label">
@@ -2322,6 +2436,25 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                       >
                         <X size={14} /> ปิด
                       </button>
+                    </div>
+
+                    <div className="add-category-ai-bar" style={{ marginBottom: 12 }}>
+                      <button
+                        type="button"
+                        className="tag-ai-suggest-btn"
+                        disabled={analyzingTagIcon || !editingTagName.trim()}
+                        onClick={() => void handleAiSuggestTagIcon("edit")}
+                        title="ให้ AI วิเคราะห์ชื่อ Tag และเลือกไอคอน Font Awesome 6 พร้อมสีที่เหมาะสมโดยอัตโนมัติ"
+                      >
+                        {analyzingTagIcon ? <LoaderCircle className="spin" size={14} /> : <Sparkles size={14} />}
+                        <span>{analyzingTagIcon ? "AI กำลังวิเคราะห์ไอคอน..." : "🪄 ให้ AI วิเคราะห์ไอคอน Font Awesome"}</span>
+                      </button>
+                      {editingTagIcon && (
+                        <div className="tag-current-icon-pill">
+                          <i className={editingTagIcon} aria-hidden="true" style={{ color: editingTagColor }} />
+                          <span>{editingTagIcon}</span>
+                        </div>
+                      )}
                     </div>
                     <div className="tag-edit-inline-controls">
                       <input
@@ -3629,94 +3762,63 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                     </div>
                   )}
 
-                  {/* AI Re-analyze & 3-Style Caption Box */}
-              <div className="ai-reanalyze-box">
-                <div className="ai-reanalyze-copy">
-                  <span className="ai-reanalyze-badge">
-                    <Sparkles size={14} /> AI Social Media Copywriter
-                  </span>
-                  <strong>ทบทวนรูปภาพ & สร้างแคปชั่นใหม่ด้วย AI</strong>
-                  <p>
-                    ให้ AI ช่วยวิเคราะห์ภาพและเขียนแคปชั่นประชาสัมพันธ์สไตล์ Content Marketing สำหรับ Facebook/Social Media สั้น กระชับ มี Hook กระตุกสายตา พร้อมอิโมจิและแฮชแท็ก (มี 3 สไตล์ให้เลือก)
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="ai-reanalyze-btn"
-                  disabled={reanalyzingEdit}
-                  onClick={handleReanalyzeEditMedia}
-                >
-                  {reanalyzingEdit ? <LoaderCircle className="spin" size={16} /> : <WandSparkles size={16} />}
-                  <span>{reanalyzingEdit ? "กำลังวิเคราะห์และคิดแคปชั่น..." : "ทบทวนรูปภาพด้วย AI"}</span>
-                </button>
-              </div>
-
-              {editAiMessage && (
-                <div className={`ai-assist-banner ${editAiMessage.type}`} role="status">
-                  {editAiMessage.type === "info" && <LoaderCircle className="spin" size={16} />}
-                  {editAiMessage.type === "success" && <Check size={16} />}
-                  {editAiMessage.type === "error" && <AlertTriangle size={16} />}
-                  <span>{editAiMessage.text}</span>
-                </div>
-              )}
-
-              {editCaptionOptions.length > 0 && (
-                <div className="ai-caption-picker-container">
-                  <div className="ai-caption-picker-header">
-                    <div className="caption-picker-title">
-                      <Sparkles size={16} style={{ color: "#d97706" }} />
-                      <strong>ตัวเลือกแคปชั่น 3 แบบจาก AI Copywriter (คลิกเพื่อเลือกใช้):</strong>
-                    </div>
-                    <span className="caption-picker-badge">3 สไตล์ให้เลือก</span>
-                  </div>
-
-                  <div className="ai-caption-cards-grid">
-                    {editCaptionOptions.map((opt, idx) => (
-                      <div
-                        key={opt.id || idx}
-                        className={`ai-caption-card ${selectedCaptionIdx === idx ? "is-selected" : ""}`}
-                        onClick={() => applyCaptionOption(opt, idx)}
-                      >
-                        <div className="caption-card-top">
-                          <span className="caption-card-badge">{opt.name}</span>
-                          {selectedCaptionIdx === idx ? (
-                            <span className="caption-applied-tag">
-                              <Check size={13} /> ใช้งานอยู่
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              className="caption-apply-btn"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                applyCaptionOption(opt, idx);
-                              }}
-                            >
-                              เลือกใช้แบบนี้
-                            </button>
-                          )}
+                  {uploadCaptionOptions.length > 0 && (
+                    <div className="ai-caption-picker-container">
+                      <div className="ai-caption-picker-header">
+                        <div className="caption-picker-title">
+                          <Sparkles size={16} style={{ color: "#d97706" }} />
+                          <strong>ตัวเลือกแคปชั่น 3 แบบจาก AI Copywriter (คลิกเพื่อเลือกใช้):</strong>
                         </div>
-
-                        {opt.hook && <div className="caption-hook-text">"{opt.hook}"</div>}
-
-                        <div className="caption-body-preview">
-                          <FormattedDescription text={opt.caption} />
-                        </div>
-
-                        {opt.hashtags && opt.hashtags.length > 0 && (
-                          <div className="caption-hashtags-row">
-                            {opt.hashtags.map((h, i) => (
-                              <span key={i} className="caption-tag-pill">
-                                {h.startsWith("#") ? h : `#${h}`}
-                              </span>
-                            ))}
-                          </div>
-                        )}
+                        <span className="caption-picker-badge">3 สไตล์ให้เลือก</span>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+
+                      <div className="ai-caption-cards-grid">
+                        {uploadCaptionOptions.map((opt, idx) => (
+                          <div
+                            key={opt.id || idx}
+                            className={`ai-caption-card ${selectedUploadCaptionIdx === idx ? "is-selected" : ""}`}
+                            onClick={() => applyUploadCaptionOption(opt, idx)}
+                          >
+                            <div className="caption-card-top">
+                              <span className="caption-card-badge">{opt.name}</span>
+                              {selectedUploadCaptionIdx === idx ? (
+                                <span className="caption-applied-tag">
+                                  <Check size={13} /> ใช้งานอยู่
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="caption-apply-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    applyUploadCaptionOption(opt, idx);
+                                  }}
+                                >
+                                  เลือกใช้แบบนี้
+                                </button>
+                              )}
+                            </div>
+
+                            {opt.hook && <div className="caption-hook-text">"{opt.hook}"</div>}
+
+                            <div className="caption-body-preview">
+                              <FormattedDescription text={opt.caption} />
+                            </div>
+
+                            {opt.hashtags && opt.hashtags.length > 0 && (
+                              <div className="caption-hashtags-row">
+                                {opt.hashtags.map((h, i) => (
+                                  <span key={i} className="caption-tag-pill">
+                                    {h.startsWith("#") ? h : `#${h}`}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
               <div className="form-grid">
                     <label className="field-wide">
@@ -4136,6 +4238,95 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                   </button>
                 </div>
               </div>
+
+              {/* AI Review & 3-Style Social Media Caption Generator */}
+              <div className="ai-reanalyze-box">
+                <div className="ai-reanalyze-copy">
+                  <span className="ai-reanalyze-badge">
+                    <Sparkles size={14} /> AI Content Marketing & Social Media Copywriter
+                  </span>
+                  <strong>ทบทวนรูปภาพ & สร้างแคปชั่นใหม่ด้วย AI</strong>
+                  <p>
+                    ให้ AI ผู้เชี่ยวชาญด้าน Content Marketing ช่วยวิเคราะห์ภาพจริงอย่างละเอียด และเสนอแคปชั่น 3 สไตล์ สั้น กระชับ มี Hook กระตุกสายตา พร้อมอิโมจิ Bullet points และไฮไลต์คำสำคัญ
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="ai-reanalyze-btn"
+                  disabled={reanalyzingEdit}
+                  onClick={handleReanalyzeEditMedia}
+                >
+                  {reanalyzingEdit ? <LoaderCircle className="spin" size={16} /> : <WandSparkles size={16} />}
+                  <span>{reanalyzingEdit ? "กำลังวิเคราะห์และคิดแคปชั่น..." : "✨ ทบทวนรูปภาพ & คิดแคปชั่นใหม่ด้วย AI"}</span>
+                </button>
+              </div>
+
+              {editAiMessage && (
+                <div className={`ai-assist-banner ${editAiMessage.type}`} role="status">
+                  {editAiMessage.type === "info" && <LoaderCircle className="spin" size={16} />}
+                  {editAiMessage.type === "success" && <Check size={16} />}
+                  {editAiMessage.type === "error" && <AlertTriangle size={16} />}
+                  <span>{editAiMessage.text}</span>
+                </div>
+              )}
+
+              {editCaptionOptions.length > 0 && (
+                <div className="ai-caption-picker-container">
+                  <div className="ai-caption-picker-header">
+                    <div className="caption-picker-title">
+                      <Sparkles size={16} style={{ color: "#d97706" }} />
+                      <strong>ตัวเลือกแคปชั่น 3 แบบจาก AI Copywriter (คลิกเพื่อเลือกใช้):</strong>
+                    </div>
+                    <span className="caption-picker-badge">3 สไตล์ให้เลือก</span>
+                  </div>
+
+                  <div className="ai-caption-cards-grid">
+                    {editCaptionOptions.map((opt, idx) => (
+                      <div
+                        key={opt.id || idx}
+                        className={`ai-caption-card ${selectedCaptionIdx === idx ? "is-selected" : ""}`}
+                        onClick={() => applyCaptionOption(opt, idx)}
+                      >
+                        <div className="caption-card-top">
+                          <span className="caption-card-badge">{opt.name}</span>
+                          {selectedCaptionIdx === idx ? (
+                            <span className="caption-applied-tag">
+                              <Check size={13} /> ใช้งานอยู่
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="caption-apply-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                applyCaptionOption(opt, idx);
+                              }}
+                            >
+                              เลือกใช้แบบนี้
+                            </button>
+                          )}
+                        </div>
+
+                        {opt.hook && <div className="caption-hook-text">"{opt.hook}"</div>}
+
+                        <div className="caption-body-preview">
+                          <FormattedDescription text={opt.caption} />
+                        </div>
+
+                        {opt.hashtags && opt.hashtags.length > 0 && (
+                          <div className="caption-hashtags-row">
+                            {opt.hashtags.map((h, i) => (
+                              <span key={i} className="caption-tag-pill">
+                                {h.startsWith("#") ? h : `#${h}`}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="form-grid">
                 <label className="field-wide">
