@@ -31,6 +31,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormattedDescription } from "./lib/text-formatting";
 import {
   getItemCategories,
   optimizeThumbnailUrl,
@@ -968,9 +969,13 @@ export function MediaGallery() {
                   <h2>{featured?.title ?? "เฝ้าระวังเหตุการณ์ในจังหวัดสตูล"}</h2>
                 </div>
 
-                <p className="alert-description">
-                  {featured?.description ?? "รู้จักกลุ่มเสี่ยง ดูแลตนเอง และป้องกันได้อย่างปลอดภัย"}
-                </p>
+                <div className="alert-description">
+                  {featured?.description ? (
+                    <FormattedDescription text={featured.description} />
+                  ) : (
+                    "รู้จักกลุ่มเสี่ยง ดูแลตนเอง และป้องกันได้อย่างปลอดภัย"
+                  )}
+                </div>
 
                 <div className="alert-meta">
                   <span><MapPin size={15} /> {featured?.location ?? "จังหวัดสตูล"}</span>
@@ -1361,7 +1366,7 @@ export function MediaGallery() {
                       >
                         {item.title}
                       </h3>
-                      <p>{item.description}</p>
+                      <div className="media-card-description"><FormattedDescription text={item.description} /></div>
                       <div className="media-meta-row">
                         <time dateTime={item.eventDate}>
                           <CalendarDays size={14} /> {formatThaiDate(item.eventDate)}
@@ -1628,7 +1633,7 @@ export function MediaGallery() {
                   )}
                 </div>
                 <h2 id="detail-title">{selected.title}</h2>
-                <p>{selected.description}</p>
+                <div className="detail-description-block"><FormattedDescription text={selected.description} /></div>
                 <dl>
                   <div><dt><MapPin size={16} /> พื้นที่</dt><dd>{selected.location}</dd></div>
                   <div><dt><CalendarDays size={16} /> วันที่</dt><dd>{formatThaiDate(selected.eventDate)}</dd></div>

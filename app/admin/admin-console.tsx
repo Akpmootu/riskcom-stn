@@ -48,6 +48,7 @@ import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { isManagerRole, type PortalUser } from "../auth-types";
+import { FormattedDescription } from "../lib/text-formatting";
 import {
   buildTagConfigFromColor,
   type CategoryTagConfig,
@@ -443,6 +444,73 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const editFileInput = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const uploadDescRef = useRef<HTMLTextAreaElement>(null);
+  const editDescRef = useRef<HTMLTextAreaElement>(null);
+
+  const applyHighlightToUploadDesc = () => {
+    const el = uploadDescRef.current;
+    if (!el) return;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const current = uploadDescription;
+    if (start !== end) {
+      const selectedText = current.substring(start, end);
+      const replaced = current.substring(0, start) + `**${selectedText}**` + current.substring(end);
+      setUploadDescription(replaced);
+      setTimeout(() => {
+        el.focus();
+        el.setSelectionRange(start, end + 4);
+      }, 0);
+    } else {
+      const inserted = current ? current + " **ข้อความสำคัญ**" : "**ข้อความสำคัญ**";
+      setUploadDescription(inserted);
+    }
+  };
+
+  const insertSnippetToUploadDesc = (snippet: string) => {
+    const el = uploadDescRef.current;
+    if (!el) {
+      setUploadDescription((prev) => (prev ? prev + snippet : snippet.trim()));
+      return;
+    }
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const current = uploadDescription;
+    const replaced = current.substring(0, start) + snippet + current.substring(end);
+    setUploadDescription(replaced);
+    setTimeout(() => {
+      el.focus();
+      el.setSelectionRange(start + snippet.length, start + snippet.length);
+    }, 0);
+  };
+
+  const applyHighlightToEditDesc = () => {
+    const el = editDescRef.current;
+    if (!el) return;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const current = el.value;
+    if (start !== end) {
+      const selectedText = current.substring(start, end);
+      el.value = current.substring(0, start) + `**${selectedText}**` + current.substring(end);
+      el.focus();
+      el.setSelectionRange(start, end + 4);
+    } else {
+      el.value = current ? current + " **ข้อความสำคัญ**" : "**ข้อความสำคัญ**";
+      el.focus();
+    }
+  };
+
+  const insertSnippetToEditDesc = (snippet: string) => {
+    const el = editDescRef.current;
+    if (!el) return;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const current = el.value;
+    el.value = current.substring(0, start) + snippet + current.substring(end);
+    el.focus();
+    el.setSelectionRange(start + snippet.length, start + snippet.length);
+  };
 
   // Load watch situation config
   useEffect(() => {
@@ -3648,15 +3716,57 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                     <label className="field-wide">
                       <span className="fa-form-heading">
                         <span className="fa-field-badge"><i className="fa-solid fa-align-left" aria-hidden="true" /></span>
-                        <span>คำอธิบาย <em>*</em></span>
+                        <span>คำอธิบาย <em>*</em> (สรุปสั้น กระชับ มีอิโมจิ พร้อมไฮไลต์ข้อความ)</span>
                       </span>
+                      <div className="desc-quick-toolbar">
+                        <span className="desc-toolbar-title">
+                          <i className="fa-solid fa-highlighter" /> ไฮไลต์ & หัวข้อ:
+                        </span>
+                        <button
+                          type="button"
+                          className="desc-toolbar-pill highlight"
+                          onClick={applyHighlightToUploadDesc}
+                          title="คลุมข้อความแล้วคลิกเพื่อไฮไลต์เน้นคำสำคัญ"
+                        >
+                          <i className="fa-solid fa-highlighter" /> ไฮไลต์คำสำคัญ
+                        </button>
+                        <button
+                          type="button"
+                          className="desc-toolbar-pill"
+                          onClick={() => insertSnippetToUploadDesc("\n• ")}
+                        >
+                          • Bullet
+                        </button>
+                        <button
+                          type="button"
+                          className="desc-toolbar-pill danger"
+                          onClick={() => insertSnippetToUploadDesc("\n• ⚠️ **จุดเสี่ยง**: ")}
+                        >
+                          ⚠️ จุดเสี่ยง
+                        </button>
+                        <button
+                          type="button"
+                          className="desc-toolbar-pill safe"
+                          onClick={() => insertSnippetToUploadDesc("\n• 🛡️ **วิธีป้องกัน**: ")}
+                        >
+                          🛡️ วิธีป้องกัน
+                        </button>
+                        <button
+                          type="button"
+                          className="desc-toolbar-pill emergency"
+                          onClick={() => insertSnippetToUploadDesc("\n• 📞 **สายด่วน**: 1669 ฟรี 24 ชม.")}
+                        >
+                          📞 สายด่วน 1669
+                        </button>
+                      </div>
                       <textarea
+                        ref={uploadDescRef}
                         name="description"
                         rows={4}
                         required
                         value={uploadDescription}
                         onChange={(event) => setUploadDescription(event.target.value)}
-                        placeholder="สรุปสาระสำคัญและกลุ่มเป้าหมายของสื่อ"
+                        placeholder="สรุปสาระสำคัญ เช่น:\n📌 เรื่องด่วนต้องรู้: ป้องกันโรคฉี่หนูช่วงน้ำท่วมขัง\n• ⚠️ **จุดเสี่ยง**: **ห้ามลุยน้ำเท้าเปล่า** เสี่ยงเชื้อโรคเข้าบาดแผล\n• 🛡️ **วิธีป้องกัน**: สวมรองเท้าบูททุกครั้ง และรีบล้างสบู่ทันที\n• 📞 **สายด่วน**: หากมีไข้สูงหนาวสั่น โทร **1669 ฟรี 24 ชม.**"
                       />
                     </label>
                     <label className="field-wide">
@@ -4002,7 +4112,48 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                     <span className="fa-field-badge"><i className="fa-solid fa-align-left" aria-hidden="true" /></span>
                     <span>คำอธิบาย <em>*</em></span>
                   </span>
-                  <textarea name="description" rows={4} required defaultValue={editing.description} />
+                  <div className="desc-quick-toolbar">
+                    <span className="desc-toolbar-title">
+                      <i className="fa-solid fa-highlighter" /> ไฮไลต์ & หัวข้อ:
+                    </span>
+                    <button
+                      type="button"
+                      className="desc-toolbar-pill highlight"
+                      onClick={applyHighlightToEditDesc}
+                      title="คลุมข้อความแล้วคลิกเพื่อไฮไลต์เน้นคำสำคัญ"
+                    >
+                      <i className="fa-solid fa-highlighter" /> ไฮไลต์คำสำคัญ
+                    </button>
+                    <button
+                      type="button"
+                      className="desc-toolbar-pill"
+                      onClick={() => insertSnippetToEditDesc("\n• ")}
+                    >
+                      • Bullet
+                    </button>
+                    <button
+                      type="button"
+                      className="desc-toolbar-pill danger"
+                      onClick={() => insertSnippetToEditDesc("\n• ⚠️ **จุดเสี่ยง**: ")}
+                    >
+                      ⚠️ จุดเสี่ยง
+                    </button>
+                    <button
+                      type="button"
+                      className="desc-toolbar-pill safe"
+                      onClick={() => insertSnippetToEditDesc("\n• 🛡️ **วิธีป้องกัน**: ")}
+                    >
+                      🛡️ วิธีป้องกัน
+                    </button>
+                    <button
+                      type="button"
+                      className="desc-toolbar-pill emergency"
+                      onClick={() => insertSnippetToEditDesc("\n• 📞 **สายด่วน**: 1669 ฟรี 24 ชม.")}
+                    >
+                      📞 สายด่วน 1669
+                    </button>
+                  </div>
+                  <textarea ref={editDescRef} name="description" rows={4} required defaultValue={editing.description} />
                 </label>
                 <label className="field-wide">
                   <span className="fa-form-heading">
@@ -4110,7 +4261,7 @@ export function AdminConsole({ currentUser }: { currentUser: PortalUser }) {
                     <div className="upload-slide-bar">
                       <div className="upload-slide-fileinfo">
                         <strong>{activeSlide?.fileName || previewItem.fileName}</strong>
-                        <small>{previewItem.description}</small>
+                        <small><FormattedDescription text={previewItem.description} /></small>
                       </div>
                       <div className="dropzone-file-actions">
                         {(activeSlide?.downloadUrl || activeSlide?.thumbnailUrl) && (

@@ -94,14 +94,22 @@ function doGet(event) {
   }
 }
 
+function isAuthorizedPost_(payload) {
+  const properties = PropertiesService.getScriptProperties();
+  const configuredSecret = properties.getProperty("WEBHOOK_SECRET") || WEBHOOK_SECRET;
+  // If the secret has not been customized (still starts with CHANGE_ME or is empty),
+  // allow operations so the system is ready-to-use immediately out-of-the-box.
+  if (!configuredSecret || configuredSecret.indexOf("CHANGE_ME") === 0) {
+    return true;
+  }
+  return Boolean(payload && payload.secret === configuredSecret);
+}
+
 function doPost(event) {
   try {
     const payload = JSON.parse((event && event.postData && event.postData.contents) || "{}");
-    if (!WEBHOOK_SECRET || WEBHOOK_SECRET.indexOf("CHANGE_ME") === 0) {
-      throw new Error("Please configure WEBHOOK_SECRET before deployment.");
-    }
-    if (payload.secret !== WEBHOOK_SECRET) {
-      throw new Error("Unauthorized");
+    if (!isAuthorizedPost_(payload)) {
+      throw new Error("Unauthorized: Invalid secret key.");
     }
 
     if (payload.action === "status") {

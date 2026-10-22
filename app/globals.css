@@ -10898,3 +10898,134 @@ img {
   align-items: center;
   gap: 6px;
 }
+
+
+/* ==========================================================
+   Formatted Description, Bullet Points, and Text Highlights
+   ========================================================== */
+
+.formatted-description-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+}
+
+.desc-bullet-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  line-height: 1.5;
+  margin: 1.5px 0;
+}
+
+.desc-bullet-dot {
+  color: #0284c7;
+  font-weight: 800;
+  font-size: 15px;
+  line-height: 1.35;
+  flex-shrink: 0;
+}
+
+.desc-bullet-body {
+  flex: 1;
+}
+
+.desc-text-line {
+  line-height: 1.5;
+  margin: 1.5px 0;
+}
+
+/* Yellow Glow Text Highlight */
+.desc-highlight-tag {
+  background: #fef08a;
+  color: #713f12;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid #fde047;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* In Dark Containers / Alert Cards / Hero */
+.alert-description .desc-highlight-tag,
+.alert-card .desc-highlight-tag {
+  background: rgba(254, 240, 138, 0.22);
+  color: #fef08a;
+  border: 1px solid rgba(253, 224, 71, 0.45);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+/* Quick Highlight Toolbar above Description textarea */
+.desc-quick-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+}
+
+.desc-toolbar-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 4px;
+}
+
+.desc-toolbar-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+  transition: all 0.15s ease;
+}
+
+.desc-toolbar-pill:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+  transform: translateY(-1px);
+}
+
+.desc-toolbar-pill.highlight {
+  background: #fef9c3;
+  border-color: #fde047;
+  color: #854d0e;
+  font-weight: 700;
+}
+
+.desc-toolbar-pill.highlight:hover {
+  background: #fef08a;
+}
+
+.desc-toolbar-pill.danger {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #991b1b;
+}
+
+.desc-toolbar-pill.safe {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+  color: #166534;
+}
+
+.desc-toolbar-pill.emergency {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1e40af;
+}
