@@ -64,28 +64,12 @@ export default async function AdminLoginPage() {
                 </button>
               </form>
             )}
-            {authProviderAvailability.credentials && (
-              <form
-                action={async () => {
-                  "use server";
-                  await signIn("credentials", {
-                    redirectTo: "/admin",
-                    email: "akaporn1234@gmail.com",
-                  });
-                }}
-              >
-                <button className="admin-primary" type="submit" style={{ marginTop: 10 }}>
-                  <ShieldCheck size={20} />
-                  เข้าสู่ระบบผู้ดูแลระบบ (Dev / Demo Mode)
-                </button>
-              </form>
-            )}
           </div>
 
           {!authProviderAvailability.google &&
             !authProviderAvailability.line && (
               <div className="form-alert error" style={{ marginTop: 14 }}>
-                ยังไม่ได้ตั้งค่า Google / LINE OAuth (สามารถกดปุ่มสีส้มด้านบนเพื่อทดสอบระบบได้ทันที)
+                ยังไม่ได้ตั้งค่า Google / LINE OAuth กรุณาติดต่อผู้ดูแลระบบเพื่อดำเนินการต่อ
               </div>
             )}
 
