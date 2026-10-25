@@ -36,6 +36,11 @@ export async function PATCH(request: Request) {
     const email = normalizedGmail(body.email);
     const status = String(body.status || "") as PortalStatus;
     const role = String(body.role || "") as PortalRole;
+    const firstName = String(body.firstName || "").trim();
+    const lastName = String(body.lastName || "").trim();
+    const position = String(body.position || "").trim();
+    const workplace = String(body.workplace || "").trim();
+    const phone = String(body.phone || "").replace(/[^\d+]/g, "").trim();
 
     if (
       !email ||
@@ -48,11 +53,29 @@ export async function PATCH(request: Request) {
         { status: 400 },
       );
     }
-
     const users = await listPortalUsers();
     const target = users.find((entry) => entry.email === email);
     if (!target) {
       return json({ ok: false, error: "ไม่พบสมาชิก" }, { status: 404 });
+    }
+    const profile = {
+      firstName: firstName || target.firstName,
+      lastName: lastName || target.lastName,
+      position: position || target.position,
+      workplace: workplace || target.workplace,
+      phone: phone || target.phone,
+    };
+    if (
+      !profile.firstName ||
+      !profile.lastName ||
+      !profile.position ||
+      !profile.workplace ||
+      profile.phone.length < 9
+    ) {
+      return json(
+        { ok: false, error: "กรุณากรอกข้อมูลสมาชิกให้ครบถ้วนและตรวจสอบเบอร์โทร" },
+        { status: 400 },
+      );
     }
     if (
       actor.role !== "super_admin" &&
@@ -69,6 +92,7 @@ export async function PATCH(request: Request) {
       email,
       status,
       role,
+      ...profile,
       approvedBy: actor.email,
     });
     if (!result.ok) {

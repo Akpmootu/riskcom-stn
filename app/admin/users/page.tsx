@@ -70,7 +70,7 @@ export default async function UserManagementPage() {
             <span className="section-kicker">MEMBER MANAGEMENT</span>
             <h1>ตรวจสอบและจัดการผู้ใช้งาน</h1>
             <p>
-              อนุมัติคำขอใหม่ กำหนดสิทธิ์ และระงับผู้ใช้งานในระบบอัปโหลด
+              ตรวจสอบรายชื่อ อนุมัติคำขอ กำหนดสิทธิ์ และแก้ไขข้อมูลสมาชิกในระบบอัปโหลด
             </p>
           </div>
         </section>

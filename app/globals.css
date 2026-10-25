@@ -11544,3 +11544,192 @@ img {
   font-family: monospace;
   color: #475569;
 }
+
+
+/* Member directory and editable member profile */
+.user-panel-heading {
+  margin-bottom: 18px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.user-panel-heading h2 {
+  margin: 4px 0 3px;
+  color: var(--ink);
+  font-family: var(--font-heading);
+  font-size: 21px;
+}
+
+.user-panel-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.user-result-count,
+.user-role-label {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.user-card.is-editing {
+  border-color: #7dd3fc;
+  background: #f0f9ff;
+  box-shadow: 0 8px 22px rgba(2, 132, 199, 0.08);
+}
+
+.user-role-label {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+.user-edit-button,
+.user-cancel-button {
+  min-height: 38px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  color: #0369a1;
+  background: #e0f2fe;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.user-edit-button:hover,
+.user-cancel-button:hover {
+  background: #bae6fd;
+}
+
+.user-edit-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.user-edit-form {
+  grid-column: 2 / -1;
+  margin-top: 4px;
+  padding: 18px;
+  border: 1px solid #bae6fd;
+  border-radius: 12px;
+  background: var(--white);
+}
+
+.user-edit-form-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  color: #0369a1;
+}
+
+.user-edit-form-heading div {
+  display: grid;
+  gap: 3px;
+}
+
+.user-edit-form-heading strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.user-edit-form-heading small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.user-edit-fields {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.user-edit-fields label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.user-edit-fields em {
+  color: #dc2626;
+  font-style: normal;
+}
+
+.user-edit-fields input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  outline: 0;
+  color: var(--text);
+  background: var(--white);
+  font: inherit;
+  font-size: 14px;
+}
+
+.user-edit-fields input:focus {
+  border-color: var(--coral);
+  box-shadow: 0 0 0 3px rgba(239, 106, 93, 0.14);
+}
+
+.user-edit-fields input[readonly] {
+  color: var(--muted);
+  background: #f8fafc;
+}
+
+.user-edit-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.user-edit-actions .admin-primary {
+  min-height: 38px;
+  padding-inline: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 8px;
+  font-size: 13.5px;
+}
+
+@media (max-width: 620px) {
+  .user-panel-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 7px;
+  }
+
+  .user-edit-form {
+    grid-column: 1 / -1;
+    padding: 14px;
+  }
+
+  .user-edit-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .user-edit-actions {
+    flex-direction: column-reverse;
+  }
+
+  .user-edit-actions button,
+  .user-edit-button {
+    width: 100%;
+  }
+}
