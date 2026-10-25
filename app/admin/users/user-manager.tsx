@@ -48,7 +48,7 @@ export function UserManager({
   const [users, setUsers] = useState(initialUsers);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<PortalStatus | "all">(
-    "pending",
+    "all",
   );
   const [busyEmail, setBusyEmail] = useState("");
   const [editingEmail, setEditingEmail] = useState("");
