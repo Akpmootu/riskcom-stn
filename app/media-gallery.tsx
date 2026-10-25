@@ -114,6 +114,23 @@ const popularKeywords = [
   "สุขภาพเด็ก",
 ];
 
+function getPaginationItems(totalPages: number, currentPage: number): Array<number | "ellipsis"> {
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
+
+  const candidates = [1, totalPages, currentPage - 1, currentPage, currentPage + 1]
+    .filter((page) => page >= 1 && page <= totalPages)
+    .filter((page, index, pages) => pages.indexOf(page) === index)
+    .sort((a, b) => a - b);
+  const result: Array<number | "ellipsis"> = [];
+
+  candidates.forEach((page, index) => {
+    if (index > 0 && page - candidates[index - 1] > 1) result.push("ellipsis");
+    result.push(page);
+  });
+
+  return result;
+}
+
 function formatThaiDate(value: string) {
   if (!value) return "ไม่ระบุวันที่";
   const normalized = /^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -418,6 +435,8 @@ export function MediaGallery() {
   const [tagConfigs, setTagConfigs] = useState<CategoryTagConfig[]>([]);
   const [watchConfig, setWatchConfig] = useState<WatchSituationConfig>(DEFAULT_WATCH_SITUATION);
   const [activeService, setActiveService] = useState<PublicServiceId | null>(null);
+  const [pageSize, setPageSize] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
   const touchStartX = useRef<number | null>(null);
 
   useEffect(() => {
@@ -682,6 +701,37 @@ export function MediaGallery() {
     });
   }, [category, items, phase, query]);
 
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const paginatedItems = useMemo(
+    () => filteredItems.slice((safeCurrentPage - 1) * pageSize, safeCurrentPage * pageSize),
+    [filteredItems, pageSize, safeCurrentPage],
+  );
+  const paginationItems = useMemo(
+    () => getPaginationItems(totalPages, safeCurrentPage),
+    [safeCurrentPage, totalPages],
+  );
+
+  function updateQuery(nextQuery: string) {
+    setQuery(nextQuery);
+    setCurrentPage(1);
+  }
+
+  function updatePhase(nextPhase: IncidentPhase | "all") {
+    setPhase(nextPhase);
+    setCurrentPage(1);
+  }
+
+  function updateCategory(nextCategory: string) {
+    setCategory(nextCategory);
+    setCurrentPage(1);
+  }
+
+  function updatePageSize(nextPageSize: number) {
+    setPageSize(nextPageSize);
+    setCurrentPage(1);
+  }
+
   useEffect(() => {
     if (items.length === 0) {
       setFeaturedList([]);
@@ -843,7 +893,7 @@ export function MediaGallery() {
               <span className="sr-only">ค้นหาสื่อ</span>
               <input
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => updateQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") jumpToGallery();
                 }}
@@ -863,7 +913,7 @@ export function MediaGallery() {
                     type="button"
                     className={query === tag ? "popular-tag is-active" : "popular-tag"}
                     onClick={() => {
-                      setQuery((current) => (current === tag ? "" : tag));
+                      updateQuery(query === tag ? "" : tag);
                       jumpToGallery();
                     }}
                   >
@@ -1045,10 +1095,10 @@ export function MediaGallery() {
         onOpenService={(serviceId) => setActiveService(serviceId)}
         onViewAll={() => {
           if (watchConfig.phase !== "all") {
-            setPhase(watchConfig.phase);
+            updatePhase(watchConfig.phase);
           }
           if (watchConfig.categories.length > 0) {
-            setCategory(watchConfig.categories[0]);
+            updateCategory(watchConfig.categories[0]);
           }
           jumpToGallery();
         }}
@@ -1074,7 +1124,7 @@ export function MediaGallery() {
                 type="button"
                 className="section-outline-pill"
                 onClick={() => {
-                  setPhase("all");
+                  updatePhase("all");
                   jumpToGallery();
                 }}
               >
@@ -1092,7 +1142,7 @@ export function MediaGallery() {
                     type="button"
                     className={phase === item.id ? `phase-card phase-${item.id} is-active` : `phase-card phase-${item.id}`}
                     onClick={() => {
-                      setPhase((current) => (current === item.id ? "all" : item.id));
+                      updatePhase(phase === item.id ? "all" : item.id);
                       document.getElementById("gallery")?.scrollIntoView({ behavior: "smooth" });
                     }}
                     aria-pressed={phase === item.id}
@@ -1129,11 +1179,11 @@ export function MediaGallery() {
                 <span className="sr-only">ค้นหาในคลังสื่อ</span>
                 <input
                   value={query}
-                  onChange={(event) => setQuery(event.target.value)}
+                  onChange={(event) => updateQuery(event.target.value)}
                   placeholder="ค้นหาชื่อสื่อ หัวข้อ หรือสถานการณ์..."
                 />
                 {query && (
-                  <button type="button" aria-label="ล้างคำค้น" onClick={() => setQuery("")}>
+                  <button type="button" aria-label="ล้างคำค้น" onClick={() => updateQuery("")}>
                     <X size={16} />
                   </button>
                 )}
@@ -1141,7 +1191,7 @@ export function MediaGallery() {
 
               <label className="gallery-select-wrap">
                 <span className="sr-only">กรองตามหมวดหมู่</span>
-                <select value={category} onChange={(event) => setCategory(event.target.value)}>
+                <select value={category} onChange={(event) => updateCategory(event.target.value)}>
                   {categories.map((item) => (
                     <option key={item} value={item}>
                       {item === "ทั้งหมด" ? "หมวดหมู่: ทั้งหมด" : item}
@@ -1154,7 +1204,7 @@ export function MediaGallery() {
                 <span className="sr-only">กรองตามช่วงเหตุการณ์</span>
                 <select
                   value={phase}
-                  onChange={(event) => setPhase(event.target.value as IncidentPhase | "all")}
+                  onChange={(event) => updatePhase(event.target.value as IncidentPhase | "all")}
                 >
                   <option value="all">ช่วงเหตุการณ์: ทั้งหมด</option>
                   <option value="before">ก่อนเกิดเหตุ</option>
@@ -1195,7 +1245,7 @@ export function MediaGallery() {
                             }
                         : undefined
                     }
-                    onClick={() => setCategory(item)}
+                    onClick={() => updateCategory(item)}
                     aria-pressed={isActive}
                   >
                     {isActive ? (
@@ -1215,9 +1265,9 @@ export function MediaGallery() {
                   className="clear-filters"
                   type="button"
                   onClick={() => {
-                    setPhase("all");
-                    setCategory("ทั้งหมด");
-                    setQuery("");
+                    updatePhase("all");
+                    updateCategory("ทั้งหมด");
+                    updateQuery("");
                   }}
                 >
                   ล้างตัวกรอง
@@ -1249,7 +1299,7 @@ export function MediaGallery() {
 
           {filteredItems.length ? (
             <div className="gallery-grid">
-              {filteredItems.map((item) => {
+              {paginatedItems.map((item) => {
                 const slides = getMediaSlides(item);
                 const cardSlideIdx = Math.min(
                   cardSlideIndices[item.id] ?? 0,
@@ -1349,7 +1399,7 @@ export function MediaGallery() {
                               }}
                               onClick={(event) => {
                                 event.stopPropagation();
-                                setCategory(catName);
+                                updateCategory(catName);
                               }}
                             >
                               <i className={cfg.icon} aria-hidden="true" />
@@ -1414,10 +1464,69 @@ export function MediaGallery() {
               <Search size={28} />
               <h3>ยังไม่พบสื่อที่ตรงกับการค้นหา</h3>
               <p>ลองเปลี่ยนคำค้นหา หรือเลือกช่วงเหตุการณ์อื่น</p>
-              <button type="button" onClick={() => { setQuery(""); setPhase("all"); setCategory("ทั้งหมด"); }}>
+              <button type="button" onClick={() => { updateQuery(""); updatePhase("all"); updateCategory("ทั้งหมด"); }}>
                 ดูสื่อทั้งหมด
               </button>
             </div>
+          )}
+
+          {filteredItems.length > 0 && (
+            <nav className="gallery-pagination" aria-label="หน้าคลังสื่อ">
+              <div className="gallery-pagination-summary">
+                <label>
+                  แสดง
+                  <select
+                    value={pageSize}
+                    onChange={(event) => updatePageSize(Number(event.target.value))}
+                    aria-label="จำนวนสื่อต่อหน้า"
+                  >
+                    <option value={10}>10</option>
+                    <option value={20}>20</option>
+                    <option value={30}>30</option>
+                  </select>
+                  รายการต่อหน้า
+                </label>
+                <span>
+                  รายการที่ {(safeCurrentPage - 1) * pageSize + 1}–{Math.min(safeCurrentPage * pageSize, filteredItems.length)} จาก {filteredItems.length}
+                </span>
+              </div>
+
+              <div className="gallery-pagination-controls">
+                <button
+                  type="button"
+                  className="gallery-page-button gallery-page-arrow"
+                  onClick={() => setCurrentPage(Math.max(1, safeCurrentPage - 1))}
+                  disabled={safeCurrentPage === 1}
+                  aria-label="ไปหน้าก่อนหน้า"
+                >
+                  <ChevronLeft size={17} />
+                </button>
+                {paginationItems.map((page, index) =>
+                  page === "ellipsis" ? (
+                    <span className="gallery-page-ellipsis" key={`ellipsis-${index}`} aria-hidden="true">…</span>
+                  ) : (
+                    <button
+                      type="button"
+                      key={page}
+                      className={page === safeCurrentPage ? "gallery-page-button is-active" : "gallery-page-button"}
+                      onClick={() => setCurrentPage(page)}
+                      aria-current={page === safeCurrentPage ? "page" : undefined}
+                    >
+                      {page}
+                    </button>
+                  ),
+                )}
+                <button
+                  type="button"
+                  className="gallery-page-button gallery-page-arrow"
+                  onClick={() => setCurrentPage(Math.min(totalPages, safeCurrentPage + 1))}
+                  disabled={safeCurrentPage === totalPages}
+                  aria-label="ไปหน้าถัดไป"
+                >
+                  <ChevronRight size={17} />
+                </button>
+              </div>
+            </nav>
           )}
         </div>
       </section>

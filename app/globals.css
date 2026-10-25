@@ -1319,6 +1319,106 @@ img {
   font-weight: 600;
 }
 
+.gallery-pagination {
+  margin-top: 28px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 8px 24px rgba(11, 37, 69, 0.05);
+}
+
+.gallery-pagination-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
+.gallery-pagination-summary label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.gallery-pagination-summary select {
+  min-height: 34px;
+  padding: 0 28px 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  outline: 0;
+  color: var(--ink);
+  background: var(--white);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.gallery-pagination-summary select:focus,
+.gallery-page-button:focus-visible {
+  border-color: var(--coral);
+  outline: 3px solid rgba(239, 106, 93, 0.2);
+  outline-offset: 1px;
+}
+
+.gallery-pagination-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.gallery-page-button {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 9px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid #dbe3ec;
+  border-radius: 9px;
+  color: var(--ink);
+  background: var(--white);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+
+.gallery-page-button:hover:not(:disabled):not(.is-active) {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.gallery-page-button.is-active {
+  border-color: var(--ink);
+  color: var(--white);
+  background: var(--ink);
+}
+
+.gallery-page-button:disabled {
+  color: #a8b3c2;
+  background: #f8fafc;
+  cursor: not-allowed;
+}
+
+.gallery-page-arrow {
+  padding-inline: 7px;
+}
+
+.gallery-page-ellipsis {
+  min-width: 22px;
+  color: var(--muted);
+  text-align: center;
+}
+
 .gallery-grid {
   margin-top: 8px;
   display: grid;
@@ -5504,6 +5604,22 @@ img {
 
   .gallery-grid {
     grid-template-columns: 1fr;
+  }
+
+  .gallery-pagination {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .gallery-pagination-summary {
+    justify-content: space-between;
+  }
+
+  .gallery-pagination-controls {
+    justify-content: center;
+    overflow-x: auto;
+    padding-bottom: 2px;
   }
 
   .media-body h3,
