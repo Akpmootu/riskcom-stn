@@ -24,6 +24,7 @@ export async function POST(request: Request) {
     const firstName = String(body.firstName || "").trim();
     const lastName = String(body.lastName || "").trim();
     const position = String(body.position || "").trim();
+    const department = String(body.department || "").trim();
     const workplace = String(body.workplace || "").trim();
     const phone = String(body.phone || "").replace(/[^\d+]/g, "").trim();
 
@@ -33,7 +34,7 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
-    if (!firstName || !lastName || !position || !workplace || phone.length < 9) {
+    if (!firstName || !lastName || !position || !department || !workplace || phone.length !== 10) {
       return json(
         { ok: false, error: "กรุณากรอกข้อมูลการลงทะเบียนให้ครบถ้วน" },
         { status: 400 },
@@ -46,6 +47,7 @@ export async function POST(request: Request) {
       firstName,
       lastName,
       position,
+      department,
       workplace,
       phone,
       provider: identity.provider,
