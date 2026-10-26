@@ -65,7 +65,8 @@ test("renders public API documentation and exposes CORS preflight", async () => 
     optionsResponse.headers.get("access-control-allow-methods") ?? "",
     /GET/,
   );
-  assert.equal(optionsResponse.headers.get("x-api-version"), "1.0");
+  assert.equal(optionsResponse.headers.get("x-api-version"), "1.1");
+  assert.match(optionsResponse.headers.get("access-control-allow-headers") ?? "", /X-API-Key/);
 });
 
 test("includes responsive media management, Kanit, system skeletons, and existing platform features", async () => {
@@ -145,18 +146,23 @@ test("includes responsive media management, Kanit, system skeletons, and existin
   assert.match(css, /\.admin-edit-modal/);
   assert.match(css, /\.developer-page/);
   assert.match(publicMediaApi, /access-control-allow-origin/);
-  assert.match(publicMediaApi, /s-maxage=300/);
+  assert.match(publicMediaApi, /private, max-age=60/);
   assert.match(publicMediaApi, /revalidate: 300/);
   assert.match(publicMediaApi, /MAX_PAGE_SIZE = 100/);
-  assert.match(publicMediaApi, /item\.status === "published"/);
+  assert.match(publicMediaApi, /images, imageCount/);
+  assert.match(publicMediaApi, /recommendationRank/);
+  assert.match(publicMediaApi, /viewCount/);
   assert.match(publicMediaListRoute, /parsePublicMediaQuery/);
   assert.match(publicMediaListRoute, /pagination/);
   assert.match(publicMediaDetailRoute, /MEDIA_NOT_FOUND/);
-  assert.match(developerPage, /โดยไม่ต้องใช้ API Key/);
+  assert.match(developerPage, /PROTECTED API · VERSION 1\.1/);
+  assert.match(developerPage, /X-API-Key/);
   assert.match(appsScript, /MEDIA_HISTORY_SHEET_NAME = "media_edit_logs"/);
   assert.match(appsScript, /SITE_STATS_SHEET_NAME = "site_stats"/);
   assert.match(appsScript, /function updateMedia_/);
   assert.match(appsScript, /function trackVisitorView_/);
+  assert.match(appsScript, /function trackMediaView_/);
+  assert.match(appsScript, /"viewCount"/);
   assert.equal(publicAppsScript, appsScript);
   assert.doesNotThrow(() => new vm.Script(appsScript), "Google Apps Script must be valid JavaScript syntax");
 

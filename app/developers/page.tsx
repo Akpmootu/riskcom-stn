@@ -5,7 +5,6 @@ import {
   Braces,
   CheckCircle2,
   Database,
-  ExternalLink,
   FileText,
   Home,
   Info,
@@ -24,23 +23,29 @@ const queryParameters = [
   ["phase", "ช่วงเหตุการณ์: before, during หรือ after", "before"],
   ["category", "ชื่อหมวดหมู่แบบตรงตัว", "โรคติดต่อ"],
   ["from / to", "ช่วงวันที่เหตุการณ์ รูปแบบ YYYY-MM-DD", "2026-01-01"],
-  ["sort", "newest, oldest หรือ updated", "newest"],
+  ["sort", "newest, oldest, updated หรือ popular", "popular"],
   ["page", "หน้าที่ต้องการ เริ่มจาก 1", "1"],
   ["limit", "จำนวนต่อหน้า ค่าเริ่มต้น 20 สูงสุด 100", "20"],
 ];
 
 const responseExample = `{
-  "apiVersion": "1.0",
+  "apiVersion": "1.1",
   "data": [
     {
       "id": "satun-flood-01",
       "title": "เฝ้าระวังน้ำท่วมฉับพลัน",
       "description": "ข้อความสื่อสารสำหรับประชาชน",
       "phase": "before",
-      "category": "น้ำท่วม",
+      "categories": ["น้ำท่วม", "โรคติดต่อ"],
+      "tags": [{ "name": "น้ำท่วม", "color": "#0284c7", "backgroundColor": "#e0f2fe" }],
       "thumbnailUrl": "https://...",
       "downloadUrl": "https://...",
-      "fileType": "image/jpeg"
+      "fileType": "image/jpeg",
+      "images": [{ "id": "img-1", "downloadUrl": "https://..." }],
+      "imageCount": 1,
+      "viewCount": 128,
+      "isRecommended": true,
+      "recommendationRank": 1
     }
   ],
   "pagination": {
@@ -94,7 +99,7 @@ export default function DevelopersPage() {
         <div className="container developer-hero-grid">
           <div>
             <span className="developer-kicker">
-              <Braces size={17} /> PUBLIC API · VERSION 1.0
+              <Braces size={17} /> PROTECTED API · VERSION 1.1
             </span>
             <h1>
               นำภาพและข้อความ
@@ -103,7 +108,7 @@ export default function DevelopersPage() {
             </h1>
             <p>
               REST API สำหรับเว็บไซต์ แอปพลิเคชัน และระบบของหน่วยงานที่ต้องการเข้าถึง
-              สื่อซึ่งเผยแพร่แล้ว โดยไม่ต้องใช้ API Key
+              สื่อซึ่งเผยแพร่แล้ว พร้อมสื่อแนะนำตามสถานการณ์และสถิติการรับชม โดยใช้ API Key
             </p>
             <div className="developer-status">
               <CheckCircle2 size={17} /> พร้อมใช้งาน · JSON · UTF-8 · CORS
@@ -112,9 +117,7 @@ export default function DevelopersPage() {
           <div className="developer-endpoint-card">
             <span>Base endpoint</span>
             <code>GET /api/v1/media</code>
-            <a href="/api/v1/media?limit=3">
-              ทดลองเปิด API <ExternalLink size={15} />
-            </a>
+            <small>ส่งคีย์ผ่าน X-API-Key หรือ Authorization: Bearer</small>
           </div>
         </div>
       </section>
@@ -137,10 +140,10 @@ export default function DevelopersPage() {
             <div>
               <h2>เริ่มต้นใช้งาน</h2>
               <p>
-                เรียก URL ผ่าน HTTP GET ได้ทันที ระบบจะส่งเฉพาะรายการที่มีสถานะเผยแพร่แล้ว
+                ขอรับ API Key จากผู้ดูแลระบบ แล้วเก็บคีย์ไว้ฝั่งเซิร์ฟเวอร์ของผู้พัฒนา ห้ามฝังคีย์ไว้ใน JavaScript ที่ส่งให้เบราว์เซอร์
               </p>
               <div className="developer-code">
-                <code>{`fetch("${exampleOrigin}/api/v1/media?phase=before&limit=10")\n  .then(response => response.json())\n  .then(result => console.log(result.data));`}</code>
+                <code>{`fetch("${exampleOrigin}/api/v1/media?phase=before&limit=10", {\n  headers: { "X-API-Key": process.env.SATUN_RISK_API_KEY }\n})\n  .then(response => response.json())\n  .then(result => console.log(result.data));`}</code>
               </div>
             </div>
           </section>
@@ -161,6 +164,16 @@ export default function DevelopersPage() {
                   <span>GET</span>
                   <code>/api/v1/media/{`{id}`}</code>
                   <p>ดึงรายละเอียดสื่อหนึ่งรายการด้วย ID</p>
+                </div>
+                <div>
+                  <span>GET</span>
+                  <code>/api/v1/media/recommended</code>
+                  <p>ดึงสถานการณ์ปัจจุบันและสื่อแนะนำที่ตรงกับสถานการณ์</p>
+                </div>
+                <div>
+                  <span>POST</span>
+                  <code>/api/v1/media/{`{id}`}/view</code>
+                  <p>นับยอดดู โดยส่ง JSON ที่มี viewerToken ประจำผู้ชม</p>
                 </div>
               </div>
             </div>
@@ -202,8 +215,7 @@ export default function DevelopersPage() {
             <div>
               <h2>ตัวอย่างข้อมูลตอบกลับ</h2>
               <p>
-                URL ภาพขนาดย่ออยู่ที่ <code>thumbnailUrl</code> และ URL ดาวน์โหลดไฟล์ต้นฉบับ
-                อยู่ที่ <code>downloadUrl</code>
+                สื่อหนึ่งหัวข้ออาจมีภาพเดียวหรือหลายภาพใน <code>images</code> แต่ละภาพมี URL ขนาดย่อและดาวน์โหลด พร้อมป้ายสีใน <code>tags</code> และยอดดูใน <code>viewCount</code>
               </p>
               <div className="developer-code developer-code-large">
                 <pre>{responseExample}</pre>
@@ -214,8 +226,7 @@ export default function DevelopersPage() {
           <section id="policy" className="developer-note">
             <h2>นโยบายการใช้งาน</h2>
             <p>
-              ข้อมูลถูกแคชที่ CDN เป็นเวลา 5 นาทีเพื่อลดภาระ Google Sheets กรุณาใช้ URL
-              จาก API โดยตรง ไม่แก้ไขเนื้อหาให้เกิดความเข้าใจผิด และแสดงที่มาว่า
+              ระบบแคชแหล่งข้อมูลฝั่งเซิร์ฟเวอร์เพื่อลดภาระ Google Sheets และไม่แคชผลตอบกลับที่มี API Key แบบสาธารณะ กรุณาเก็บคีย์เป็นความลับ ใช้ URL จาก API โดยตรง ไม่แก้ไขเนื้อหาให้เกิดความเข้าใจผิด และแสดงที่มาว่า
               “สำนักงานสาธารณสุขจังหวัดสตูล”
             </p>
           </section>

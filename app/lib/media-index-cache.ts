@@ -161,3 +161,13 @@ export function removeIndexedMediaIds(ids: string[]): void {
   );
   currentSnapshot = buildIndexedSnapshot(remaining);
 }
+
+export function updateIndexedMediaViewCount(id: string, viewCount: number): void {
+  if (!currentSnapshot) return;
+  const item = currentSnapshot.byId.get(id);
+  if (!item) return;
+  currentSnapshot = buildIndexedSnapshot([
+    { ...item, viewCount: Math.max(0, Math.trunc(viewCount)) },
+    ...currentSnapshot.allItems.filter((entry) => entry.id !== id),
+  ]);
+}

@@ -39,6 +39,7 @@ const HEADERS = [
   "updatedAt",
   "updatedBy",
   "revisionCount",
+  "viewCount",
 ];
 const USER_HEADERS = [
   "id",
@@ -137,6 +138,9 @@ function doPost(event) {
     }
     if (payload.action === "trackView") {
       return jsonOutput_({ ok: true, stats: trackVisitorView_(payload) });
+    }
+    if (payload.action === "trackMediaView") {
+      return jsonOutput_(Object.assign({ ok: true }, trackMediaView_(payload)));
     }
     if (payload.action === "getSiteSetting") {
       return jsonOutput_({
@@ -281,6 +285,7 @@ function listMedia_(status) {
         .split("|")
         .filter(Boolean);
       item.revisionCount = Number(item.revisionCount || 0);
+      item.viewCount = Number(item.viewCount || 0);
       return item;
     })
     .filter(function (item) {
@@ -342,6 +347,7 @@ function uploadMedia_(payload) {
     updatedAt: now,
     updatedBy: String(payload.uploadedBy || ""),
     revisionCount: 0,
+    viewCount: 0,
   };
 
   const spreadsheet = SpreadsheetApp.openById(resources.spreadsheetId);
@@ -668,7 +674,60 @@ function normalizeMedia_(item) {
         .split("|")
         .filter(Boolean);
   normalized.revisionCount = Number(item.revisionCount || 0);
+  normalized.viewCount = Number(item.viewCount || 0);
   return normalized;
+}
+
+function trackMediaView_(payload) {
+  const mediaId = String(payload.mediaId || "").trim();
+  const viewerToken = String(payload.viewerToken || "").trim();
+  if (!mediaId) throw new Error("Missing media id");
+  if (!/^[A-Za-z0-9._:-]{12,160}$/.test(viewerToken)) {
+    throw new Error("Invalid viewer token");
+  }
+
+  const digest = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    mediaId + ":" + viewerToken,
+  );
+  const cacheKey =
+    "media-view:" +
+    Utilities.base64EncodeWebSafe(digest).replace(/=+$/g, "").slice(0, 72);
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get(cacheKey);
+
+  const resources = ensureResources_();
+  const sheet = SpreadsheetApp.openById(resources.spreadsheetId).getSheetByName(SHEET_NAME);
+  const values = sheet.getDataRange().getValues();
+  if (values.length < 2) throw new Error("Media not found");
+  const headers = values[0].map(String);
+  const idColumn = headers.indexOf("id");
+  const statusColumn = headers.indexOf("status");
+  const viewColumn = headers.indexOf("viewCount");
+  if (idColumn < 0 || viewColumn < 0) throw new Error("Media schema is missing viewCount");
+
+  for (let rowIndex = 1; rowIndex < values.length; rowIndex += 1) {
+    if (String(values[rowIndex][idColumn]) !== mediaId) continue;
+    if (statusColumn >= 0 && String(values[rowIndex][statusColumn]).toLowerCase() === "deleted") {
+      throw new Error("Media not found");
+    }
+    const current = Number(values[rowIndex][viewColumn] || 0);
+    if (cached) return { mediaId: mediaId, viewCount: current, counted: false };
+
+    const lock = LockService.getScriptLock();
+    lock.waitLock(10000);
+    try {
+      const cell = sheet.getRange(rowIndex + 1, viewColumn + 1);
+      const nextCount = Number(cell.getValue() || 0) + 1;
+      cell.setValue(nextCount);
+      cache.put(cacheKey, "1", 21600);
+      invalidateMediaScriptCache_();
+      return { mediaId: mediaId, viewCount: nextCount, counted: true };
+    } finally {
+      lock.releaseLock();
+    }
+  }
+  throw new Error("Media not found");
 }
 
 function mediaToRow_(item) {

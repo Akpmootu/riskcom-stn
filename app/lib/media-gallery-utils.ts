@@ -204,6 +204,7 @@ export function normalizeMediaItem(
     status: rawStatus as "published" | "draft",
     keywords: visibleKeywords,
     gallery,
+    viewCount: Math.max(0, Math.trunc(Number(raw.viewCount || 0))),
     _searchIndex: searchIndex,
   };
 }

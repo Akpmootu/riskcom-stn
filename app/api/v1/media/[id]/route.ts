@@ -1,10 +1,12 @@
 import {
+  PUBLIC_API_VERSION,
   createMediaEtag,
-  fetchPublishedMedia,
+  fetchPublicMediaCatalog,
   publicApiError,
   publicApiJson,
   publicApiOptions,
 } from "@/app/lib/public-media-api";
+import { requirePublicApiKey } from "@/app/lib/public-api-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -17,14 +19,15 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   try {
+    requirePublicApiKey(request);
     const { id } = await context.params;
-    const items = await fetchPublishedMedia();
-    const item = items.find((entry) => entry.id === decodeURIComponent(id));
+    const catalog = await fetchPublicMediaCatalog();
+    const item = catalog.items.find((entry) => entry.id === decodeURIComponent(id));
 
     if (!item) {
       return publicApiJson(
         {
-          apiVersion: "1.0",
+          apiVersion: PUBLIC_API_VERSION,
           error: {
             code: "MEDIA_NOT_FOUND",
             message: "ไม่พบสื่อที่ระบุ",
@@ -38,12 +41,14 @@ export async function GET(
     const etag = createMediaEtag([item]);
     return publicApiJson(
       {
-        apiVersion: "1.0",
+        apiVersion: PUBLIC_API_VERSION,
         data: item,
+        situation: catalog.situation,
         links: {
           self: url.toString(),
           collection: `${url.origin}/api/v1/media`,
           documentation: `${url.origin}/developers`,
+          trackView: `${url.origin}/api/v1/media/${encodeURIComponent(item.id)}/view`,
         },
       },
       { status: 200 },
