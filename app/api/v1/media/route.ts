@@ -1,12 +1,14 @@
 import {
+  PUBLIC_API_VERSION,
   createMediaEtag,
-  fetchPublishedMedia,
+  fetchPublicMediaCatalog,
   filterPublicMedia,
   parsePublicMediaQuery,
   publicApiError,
   publicApiJson,
   publicApiOptions,
 } from "@/app/lib/public-media-api";
+import { requirePublicApiKey } from "@/app/lib/public-api-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -16,10 +18,11 @@ export async function OPTIONS() {
 
 export async function GET(request: Request) {
   try {
+    requirePublicApiKey(request);
     const url = new URL(request.url);
     const query = parsePublicMediaQuery(url);
-    const allItems = await fetchPublishedMedia();
-    const filteredItems = filterPublicMedia(allItems, query);
+    const catalog = await fetchPublicMediaCatalog();
+    const filteredItems = filterPublicMedia(catalog.items, query);
     const total = filteredItems.length;
     const totalPages = Math.ceil(total / query.limit);
     const start = (query.page - 1) * query.limit;
@@ -31,9 +34,10 @@ export async function GET(request: Request) {
         status: 304,
         headers: {
           "access-control-allow-origin": "*",
-          "cache-control": "public, s-maxage=300, stale-while-revalidate=600",
+          "cache-control": "private, max-age=60, stale-while-revalidate=300",
           etag,
-          "x-api-version": "1.0",
+          "x-api-version": PUBLIC_API_VERSION,
+          vary: "Authorization, X-API-Key",
         },
       });
     }
@@ -41,8 +45,10 @@ export async function GET(request: Request) {
     const baseUrl = `${url.origin}/api/v1/media`;
     return publicApiJson(
       {
-        apiVersion: "1.0",
+        apiVersion: PUBLIC_API_VERSION,
         data: items,
+        situation: catalog.situation,
+        recommended: catalog.recommended,
         pagination: {
           page: query.page,
           limit: query.limit,
@@ -63,6 +69,7 @@ export async function GET(request: Request) {
               ? withPage(url, query.page - 1)
               : null,
           itemTemplate: `${baseUrl}/{id}`,
+          recommended: `${baseUrl}/recommended`,
         },
       },
       { status: 200 },

@@ -640,6 +640,32 @@ export function MediaGallery() {
   }, [toast]);
 
   useEffect(() => {
+    const mediaId = selected?.id;
+    if (!mediaId) return;
+    let active = true;
+    let viewerToken = "";
+    try {
+      viewerToken = window.sessionStorage.getItem("satun-risk-session") || window.crypto.randomUUID();
+      window.sessionStorage.setItem("satun-risk-session", viewerToken);
+    } catch {
+      viewerToken = `viewer-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+    void fetch(`/api/media/${encodeURIComponent(mediaId)}/view`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ viewerToken }),
+    })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((result: { ok?: boolean; viewCount?: number } | null) => {
+        if (!active || !result?.ok || typeof result.viewCount !== "number") return;
+        setItems((current) => current.map((item) => item.id === mediaId ? { ...item, viewCount: result.viewCount } : item));
+        setSelected((current) => current?.id === mediaId ? { ...current, viewCount: result.viewCount } : current);
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [selected?.id]);
+
+  useEffect(() => {
     if (!selected) return;
     const slides = getMediaSlides(selected);
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1424,6 +1450,9 @@ export function MediaGallery() {
                         <span className="media-location">
                           <MapPin size={14} /> {item.location}
                         </span>
+                        <span className="media-view-count">
+                          <Eye size={14} /> {Number(item.viewCount || 0).toLocaleString("th-TH")} ครั้ง
+                        </span>
                       </div>
                       <div className="media-footer">
                         {(activeCardSlide?.downloadUrl || item.downloadUrl) ? (
@@ -1652,6 +1681,9 @@ export function MediaGallery() {
                       <Images size={14} /> ภาพที่ {safeSlideIdx + 1} / {slides.length}
                     </span>
                   )}
+                  <span className="detail-view-badge">
+                    <Eye size={13} /> {Number(selected.viewCount || 0).toLocaleString("th-TH")} ครั้ง
+                  </span>
 
                   {slides.length > 1 && (
                     <>

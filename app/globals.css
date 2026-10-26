@@ -1695,6 +1695,7 @@ img {
 }
 
 .media-meta-row time,
+.media-view-count,
 .media-location {
   display: inline-flex;
   align-items: center;
@@ -1703,6 +1704,23 @@ img {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.media-view-count {
+  white-space: nowrap;
+}
+
+.detail-view-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  padding: 0.3rem 0.55rem;
+  color: #475569;
+  background: #f8fafc;
+  font-size: 0.78rem;
+  font-weight: 700;
 }
 
 .media-footer {

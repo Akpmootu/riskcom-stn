@@ -31,6 +31,7 @@ export type MediaItem = {
   updatedAt?: string;
   updatedBy?: string;
   revisionCount?: number;
+  viewCount?: number;
   gallery?: MediaSlide[];
   _searchIndex?: string;
 };
