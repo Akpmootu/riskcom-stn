@@ -182,7 +182,8 @@ function doPost(event) {
 function ensureResources_() {
   const properties = PropertiesService.getScriptProperties();
   let folderId = properties.getProperty("SATUN_FOLDER_ID");
-  let spreadsheetId = properties.getProperty("SATUN_SHEET_ID") || DEFAULT_SPREADSHEET_ID;
+  const spreadsheetIds = getSpreadsheetIdCandidates_();
+  let spreadsheetId = "";
   let folder;
   let spreadsheet;
 
@@ -197,16 +198,20 @@ function ensureResources_() {
     properties.setProperty("SATUN_FOLDER_ID", folderId);
   }
 
-  try {
-    spreadsheet = spreadsheetId ? SpreadsheetApp.openById(spreadsheetId) : null;
-  } catch (_) {
-    spreadsheet = null;
+  for (let index = 0; index < spreadsheetIds.length; index += 1) {
+    try {
+      spreadsheetId = spreadsheetIds[index];
+      spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+      break;
+    } catch (_) {
+      spreadsheet = null;
+    }
   }
   if (!spreadsheet) {
     spreadsheet = SpreadsheetApp.create(SPREADSHEET_NAME);
     spreadsheetId = spreadsheet.getId();
-    properties.setProperty("SATUN_SHEET_ID", spreadsheetId);
   }
+  properties.setProperty("SATUN_SHEET_ID", spreadsheetId);
 
   let sheet = spreadsheet.getSheetByName(SHEET_NAME);
   if (!sheet) sheet = spreadsheet.insertSheet(SHEET_NAME);
@@ -239,12 +244,18 @@ function ensureResources_() {
   };
 }
 
+function getSpreadsheetIdCandidates_() {
+  const configuredId = PropertiesService.getScriptProperties().getProperty("SATUN_SHEET_ID");
+  return [DEFAULT_SPREADSHEET_ID, configuredId].filter(function (id, index, ids) {
+    return Boolean(id) && ids.indexOf(id) === index;
+  });
+}
+
 function getFastMediaSheet_() {
-  const properties = PropertiesService.getScriptProperties();
-  const spreadsheetId = properties.getProperty("SATUN_SHEET_ID") || DEFAULT_SPREADSHEET_ID;
-  if (spreadsheetId) {
+  const spreadsheetIds = getSpreadsheetIdCandidates_();
+  for (let index = 0; index < spreadsheetIds.length; index += 1) {
     try {
-      const spreadsheet = SpreadsheetApp.openById(spreadsheetId);
+      const spreadsheet = SpreadsheetApp.openById(spreadsheetIds[index]);
       const sheet = spreadsheet.getSheetByName(SHEET_NAME);
       if (sheet) return sheet;
     } catch (_) {}
