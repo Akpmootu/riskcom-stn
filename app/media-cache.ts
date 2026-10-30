@@ -38,6 +38,7 @@ export function readMediaCache(): MediaCacheSnapshot | null {
       response: stored.response,
       isFresh:
         stored.response.source === "google" &&
+        stored.response.items.length > 0 &&
         Date.now() - stored.cachedAt < MEDIA_CACHE_MAX_AGE_MS,
     };
   } catch {
