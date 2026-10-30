@@ -22,6 +22,7 @@ import {
   MapPin,
   Maximize2,
   Menu,
+  QrCode,
   RefreshCw,
   Search,
   Share2,
@@ -437,7 +438,15 @@ export function MediaGallery() {
   const [activeService, setActiveService] = useState<PublicServiceId | null>(null);
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
+  const [qrPanel, setQrPanel] = useState<{
+    imageUrl: string;
+    targetUrl: string;
+    loading: boolean;
+    error: string;
+    slideIndex: number;
+  } | null>(null);
   const touchStartX = useRef<number | null>(null);
+  const qrCache = useRef(new Map<string, { imageUrl: string; targetUrl: string }>());
 
   useEffect(() => {
     const stored = readStoredTagConfigs();
@@ -515,15 +524,20 @@ export function MediaGallery() {
       setSourceMessage(result.message ?? "");
       setCacheSavedAt(cachedAt);
       setShowingCachedData(fromCache);
-      const requestedId = new URLSearchParams(window.location.search).get(
-        "media",
-      );
+      const searchParams = new URLSearchParams(window.location.search);
+      const requestedId = searchParams.get("media");
       const requestedItem = effectiveItems.find(
         (item) => item.id === requestedId,
       );
       if (requestedItem) {
+        const requestedSlide = Number(searchParams.get("slide"));
+        const lastSlideIndex = Math.max(0, getMediaSlides(requestedItem).length - 1);
         setSelected(requestedItem);
-        setSelectedSlideIndex(0);
+        setSelectedSlideIndex(
+          Number.isFinite(requestedSlide)
+            ? Math.min(Math.max(0, Math.floor(requestedSlide)), lastSlideIndex)
+            : 0,
+        );
       }
     },
     [],
@@ -670,7 +684,8 @@ export function MediaGallery() {
     const slides = getMediaSlides(selected);
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        if (fullscreen) setFullscreen(false);
+        if (qrPanel) setQrPanel(null);
+        else if (fullscreen) setFullscreen(false);
         else setSelected(null);
         return;
       }
@@ -684,7 +699,7 @@ export function MediaGallery() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [fullscreen, selected]);
+  }, [fullscreen, qrPanel, selected]);
 
   useEffect(() => {
     if (!selected) return;
@@ -825,14 +840,101 @@ export function MediaGallery() {
     }
   }
 
-  async function shareItem(item: MediaItem) {
-    const url = `${window.location.origin}${window.location.pathname}?media=${encodeURIComponent(item.id)}`;
+  async function shareItem(item: MediaItem, slideIndex = 0) {
+    const url = new URL(window.location.pathname, window.location.origin);
+    url.searchParams.set("media", item.id);
+    url.searchParams.set("slide", String(Math.max(0, Math.floor(slideIndex))));
     try {
       if (navigator.share) {
-        await navigator.share({ title: item.title, text: item.description, url });
+        await navigator.share({ title: item.title, text: item.description, url: url.toString() });
       } else {
-        await navigator.clipboard.writeText(url);
+        await navigator.clipboard.writeText(url.toString());
         setToast("คัดลอกลิงก์สำหรับแชร์แล้ว");
+      }
+    } catch {
+      // A cancelled native share sheet needs no error message.
+    }
+  }
+
+  async function showQrCode(item: MediaItem, slideIndex: number) {
+    const cacheKey = `${item.id}:${slideIndex}`;
+    const cached = qrCache.current.get(cacheKey);
+    if (cached) {
+      setQrPanel({ ...cached, loading: false, error: "", slideIndex });
+      return;
+    }
+
+    try {
+      const stored = window.localStorage.getItem(`satun-risk-qr:${cacheKey}`);
+      if (stored) {
+        const parsed = JSON.parse(stored) as {
+          imageUrl?: string;
+          targetUrl?: string;
+          cachedAt?: number;
+        };
+        if (
+          parsed.imageUrl &&
+          parsed.targetUrl &&
+          typeof parsed.cachedAt === "number" &&
+          Date.now() - parsed.cachedAt < 24 * 60 * 60 * 1000
+        ) {
+          const storedResult = { imageUrl: parsed.imageUrl, targetUrl: parsed.targetUrl };
+          qrCache.current.set(cacheKey, storedResult);
+          setQrPanel({ ...storedResult, loading: false, error: "", slideIndex });
+          return;
+        }
+      }
+    } catch {
+      // Continue normally when private browsing blocks local storage.
+    }
+
+    setQrPanel({ imageUrl: "", targetUrl: "", loading: true, error: "", slideIndex });
+    try {
+      const response = await fetch("/api/qr", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mediaId: item.id, slideIndex, title: item.title }),
+      });
+      const result = (await response.json()) as {
+        imageUrl?: string;
+        targetUrl?: string;
+        error?: string;
+      };
+      if (!response.ok || !result.imageUrl || !result.targetUrl) {
+        throw new Error(result.error || "สร้าง QR Code ไม่สำเร็จ");
+      }
+      const qrResult = { imageUrl: result.imageUrl, targetUrl: result.targetUrl };
+      qrCache.current.set(cacheKey, qrResult);
+      try {
+        window.localStorage.setItem(
+          `satun-risk-qr:${cacheKey}`,
+          JSON.stringify({ ...qrResult, cachedAt: Date.now() }),
+        );
+      } catch {
+        // In-memory caching still prevents repeat requests during this visit.
+      }
+      setQrPanel({ ...qrResult, loading: false, error: "", slideIndex });
+    } catch (error) {
+      setQrPanel((current) => current ? {
+        ...current,
+        loading: false,
+        error: error instanceof Error ? error.message : "สร้าง QR Code ไม่สำเร็จ",
+      } : null);
+    }
+  }
+
+  async function shareQrLink(item: MediaItem) {
+    if (!qrPanel?.targetUrl) return;
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: item.title,
+          text: `สแกน QR Code เพื่อดู ${item.title}`,
+          url: qrPanel.targetUrl,
+        });
+      } else {
+        await navigator.clipboard.writeText(qrPanel.targetUrl);
+        setToast("คัดลอกลิงก์ของ QR Code แล้ว");
       }
     } catch {
       // A cancelled native share sheet needs no error message.
@@ -1795,8 +1897,11 @@ export function MediaGallery() {
                       <ArrowDownToLine size={18} /> ดาวน์โหลดสื่อ
                     </button>
                   )}
-                  <button className="secondary-action" type="button" onClick={() => shareItem(selected)}>
+                  <button className="secondary-action" type="button" onClick={() => shareItem(selected, safeSlideIdx)}>
                     <Share2 size={18} /> แชร์ต่อ
+                  </button>
+                  <button className="qr-action" type="button" onClick={() => void showQrCode(selected, safeSlideIdx)}>
+                    <QrCode size={18} /> สร้าง QR Code
                   </button>
                 </div>
               </div>
@@ -1804,6 +1909,68 @@ export function MediaGallery() {
           </div>
         );
       })()}
+
+      {selected && qrPanel && (
+        <div className="qr-backdrop" role="presentation" onMouseDown={() => setQrPanel(null)}>
+          <section
+            className="qr-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="qr-modal-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <button className="qr-modal-close" type="button" aria-label="ปิด QR Code" onClick={() => setQrPanel(null)}>
+              <X size={20} />
+            </button>
+            <div className="qr-modal-brand">
+              <img src="/satun-risk-logo.png" alt="ตราสำนักงานสาธารณสุขจังหวัดสตูล" />
+              <span><strong>QR Code สื่อสุขภาพ</strong><small>สำนักงานสาธารณสุขจังหวัดสตูล</small></span>
+            </div>
+            <div className="qr-preview" aria-live="polite" aria-busy={qrPanel.loading}>
+              {qrPanel.loading ? (
+                <div className="qr-loading" role="status">
+                  <span className="qr-loading-mark"><QrCode size={54} /></span>
+                  <strong>กำลังสร้าง QR Code</strong>
+                  <small>กำลังเชื่อมต่อบริการสร้างรหัส กรุณารอสักครู่</small>
+                </div>
+              ) : qrPanel.error ? (
+                <div className="qr-error" role="alert">
+                  <AlertTriangle size={36} />
+                  <strong>ยังสร้าง QR Code ไม่สำเร็จ</strong>
+                  <small>{qrPanel.error}</small>
+                  <button type="button" onClick={() => void showQrCode(selected, qrPanel.slideIndex)}>
+                    <RefreshCw size={16} /> ลองอีกครั้ง
+                  </button>
+                </div>
+              ) : (
+                <img src={qrPanel.imageUrl} alt={`QR Code สำหรับ ${selected.title}`} />
+              )}
+            </div>
+            <div className="qr-modal-copy">
+              <span className="qr-image-label">
+                {getMediaSlides(selected).length > 1
+                  ? `ภาพที่ ${qrPanel.slideIndex + 1} จาก ${getMediaSlides(selected).length}`
+                  : "สื่อประชาสัมพันธ์"}
+              </span>
+              <h3 id="qr-modal-title">{selected.title}</h3>
+              <p>สแกนเพื่อเปิดข้อมูลและภาพนี้โดยตรง สามารถนำไปใช้ในสื่อประชาสัมพันธ์ได้</p>
+            </div>
+            {!qrPanel.loading && !qrPanel.error && (
+              <div className="qr-modal-actions">
+                <a
+                  href={qrPanel.imageUrl}
+                  download={`satun-risk-media-${selected.id}-${qrPanel.slideIndex + 1}.${qrPanel.imageUrl.startsWith("data:image/svg") ? "svg" : "png"}`}
+                >
+                  <ArrowDownToLine size={18} /> ดาวน์โหลด QR
+                </a>
+                <button type="button" onClick={() => void shareQrLink(selected)}>
+                  <Share2 size={18} /> แชร์ลิงก์
+                </button>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
 
       {selected && fullscreen && (() => {
         const slides = getMediaSlides(selected);

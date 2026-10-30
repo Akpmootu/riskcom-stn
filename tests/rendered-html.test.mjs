@@ -86,6 +86,8 @@ test("includes responsive media management, Kanit, system skeletons, and existin
     publicMediaListRoute,
     publicMediaDetailRoute,
     developerPage,
+    qrRoute,
+    envExample,
   ] = await Promise.all([
     readFile(new URL("../app/media-gallery.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/media-cache.ts", import.meta.url), "utf8"),
@@ -108,6 +110,8 @@ test("includes responsive media management, Kanit, system skeletons, and existin
     readFile(new URL("../app/api/v1/media/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/v1/media/[id]/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/developers/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/qr/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../.env.example", import.meta.url), "utf8"),
   ]);
 
   assert.match(gallery, /className="mobile-bottom-nav"/);
@@ -119,6 +123,10 @@ test("includes responsive media management, Kanit, system skeletons, and existin
   assert.match(gallery, /ข้อมูลจากแคชในเครื่อง/);
   assert.match(gallery, /\/api\/analytics\/view/);
   assert.match(gallery, /API สำหรับนักพัฒนา/);
+  assert.match(gallery, /สร้าง QR Code/);
+  assert.match(gallery, /\/api\/qr/);
+  assert.match(gallery, /searchParams\.get\("slide"\)/);
+  assert.match(gallery, /className="qr-modal"/);
   assert.match(mediaCache, /MEDIA_CACHE_MAX_AGE_MS = 10 \* 60 \* 1000/);
   assert.match(mediaCache, /window\.localStorage\.getItem/);
   assert.match(mediaCache, /response\.source === "google"/);
@@ -157,6 +165,12 @@ test("includes responsive media management, Kanit, system skeletons, and existin
   assert.match(publicMediaDetailRoute, /MEDIA_NOT_FOUND/);
   assert.match(developerPage, /PROTECTED API · VERSION 1\.1/);
   assert.match(developerPage, /X-API-Key/);
+  assert.match(qrRoute, /ME_QR_API_TOKEN/);
+  assert.match(qrRoute, /GENQRCODE_API_KEY/);
+  assert.match(envExample, /ME_QR_API_TOKEN=/);
+  assert.match(envExample, /GENQRCODE_API_KEY=/);
+  assert.match(css, /\.qr-modal/);
+  assert.match(css, /prefers-reduced-motion/);
   assert.match(appsScript, /MEDIA_HISTORY_SHEET_NAME = "media_edit_logs"/);
   assert.match(appsScript, /SITE_STATS_SHEET_NAME = "site_stats"/);
   assert.match(appsScript, /function updateMedia_/);
