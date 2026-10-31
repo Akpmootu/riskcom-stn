@@ -26,6 +26,7 @@ test("QR route keeps provider credentials server-side and returns an image", asy
     assert.equal(response.status, 200);
     assert.match(json.imageUrl, /^data:image\/svg\+xml;base64,/);
     const posterSvg = Buffer.from(json.imageUrl.split(",")[1], "base64").toString("utf8");
+    assert.match(posterSvg, /หัวข้อทดสอบ/);
     assert.match(posterSvg, /กลุ่มภารกิจสื่อสารความเสี่ยง/);
     assert.match(posterSvg, /สำนักงานสาธารณสุขจังหวัดสตูล/);
     assert.equal(json.targetUrl, "https://riskcom-stn.vercel.app/?media=abc&slide=2");
@@ -55,5 +56,7 @@ test("QR route falls back to an in-process branded QR when no provider is config
   assert.equal(response.status, 200);
   assert.equal(json.provider, "local");
   assert.match(json.imageUrl, /^data:image\/svg\+xml;base64,/);
+  const posterSvg = Buffer.from(json.imageUrl.split(",")[1], "base64").toString("utf8");
+  assert.match(posterSvg, /หัวข้อทดสอบ/);
   assert.equal(json.targetUrl, "https://riskcom-stn.vercel.app/?media=abc&slide=0");
 });

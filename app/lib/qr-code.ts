@@ -76,18 +76,57 @@ function escapeSvgAttribute(value: string): string {
     .replaceAll(">", "&gt;");
 }
 
-export function buildQrPoster(qrImageUrl: string): string {
+function wrapPosterTitle(value: string): string[] {
+  const normalized = value.replace(/\s+/g, " ").trim().slice(0, 160) || "สื่อประชาสัมพันธ์";
+  const maxCharacters = 42;
+  const takeLine = (source: string, limit: number) => {
+    const segments = Array.from(
+      new Intl.Segmenter("th", { granularity: "word" }).segment(source),
+    );
+    let line = "";
+
+    for (const part of segments) {
+      if (Array.from(`${line}${part.segment}`.trim()).length <= limit) {
+        line += part.segment;
+        continue;
+      }
+      if (line.trim()) return { line: line.trim(), rest: source.slice(part.index).trim() };
+
+      const characters = Array.from(part.segment);
+      const first = characters.slice(0, limit).join("").trim();
+      const rest = `${characters.slice(limit).join("")}${source.slice(part.index + part.segment.length)}`;
+      return { line: first, rest: rest.trim() };
+    }
+
+    return { line: line.trim(), rest: "" };
+  };
+
+  const first = takeLine(normalized, maxCharacters);
+  if (!first.rest) return [first.line];
+
+  const second = takeLine(first.rest, maxCharacters - 1);
+  return [first.line, second.rest ? `${second.line}…` : second.line];
+}
+
+export function buildQrPoster(qrImageUrl: string, mediaTitle: string): string {
   const safeImageUrl = escapeSvgAttribute(qrImageUrl);
+  const titleLines = wrapPosterTitle(mediaTitle).map(escapeSvgAttribute);
+  const titleMarkup = titleLines.length === 1
+    ? `<tspan x="600" y="1285">${titleLines[0]}</tspan>`
+    : titleLines
+        .map((line, index) => `<tspan x="600" y="${1248 + index * 67}">${line}</tspan>`)
+        .join("");
   const svg = [
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1450" role="img" aria-labelledby="title desc">',
-    '<title id="title">QR Code สื่อสารความเสี่ยง สำนักงานสาธารณสุขจังหวัดสตูล</title>',
-    '<desc id="desc">QR Code พร้อมตราสัญลักษณ์และชื่อหน่วยงาน</desc>',
-    '<rect width="1200" height="1450" rx="48" fill="#ffffff"/>',
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1600" role="img" aria-labelledby="title desc">',
+    `<title id="title">QR Code: ${escapeSvgAttribute(mediaTitle)}</title>`,
+    '<desc id="desc">QR Code พร้อมชื่อหัวข้อ ตราสัญลักษณ์ และชื่อหน่วยงาน</desc>',
+    '<rect width="1200" height="1600" rx="48" fill="#ffffff"/>',
     '<rect x="56" y="56" width="1088" height="1088" rx="34" fill="#ffffff" stroke="#d8dee6" stroke-width="4"/>',
     `<image href="${safeImageUrl}" x="90" y="90" width="1020" height="1020" preserveAspectRatio="xMidYMid meet"/>`,
-    '<path d="M340 1190H860" stroke="#006837" stroke-width="8" stroke-linecap="round"/>',
-    '<text x="600" y="1280" text-anchor="middle" fill="#111827" font-family="Kanit, Sarabun, Noto Sans Thai, Arial, sans-serif" font-size="54" font-weight="700">กลุ่มภารกิจสื่อสารความเสี่ยง</text>',
-    '<text x="600" y="1365" text-anchor="middle" fill="#111827" font-family="Kanit, Sarabun, Noto Sans Thai, Arial, sans-serif" font-size="46" font-weight="600">สำนักงานสาธารณสุขจังหวัดสตูล</text>',
+    `<text text-anchor="middle" fill="#0b2948" font-family="Kanit, Sarabun, Noto Sans Thai, Arial, sans-serif" font-size="52" font-weight="700">${titleMarkup}</text>`,
+    '<path d="M340 1365H860" stroke="#006837" stroke-width="8" stroke-linecap="round"/>',
+    '<text x="600" y="1450" text-anchor="middle" fill="#111827" font-family="Kanit, Sarabun, Noto Sans Thai, Arial, sans-serif" font-size="48" font-weight="700">กลุ่มภารกิจสื่อสารความเสี่ยง</text>',
+    '<text x="600" y="1528" text-anchor="middle" fill="#111827" font-family="Kanit, Sarabun, Noto Sans Thai, Arial, sans-serif" font-size="42" font-weight="600">สำนักงานสาธารณสุขจังหวัดสตูล</text>',
     "</svg>",
   ].join("");
 

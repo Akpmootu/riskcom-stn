@@ -2806,7 +2806,7 @@ img {
 
 .qr-preview > img {
   width: min(100%, 318px);
-  aspect-ratio: 1200 / 1450;
+  aspect-ratio: 3 / 4;
   padding: 0;
   object-fit: contain;
   background: #fff;

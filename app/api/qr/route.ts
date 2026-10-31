@@ -121,7 +121,9 @@ export async function POST(request: Request) {
   const logoUrl = new URL("/ssj-satun-logo.png", origin).toString();
   const meQrToken = process.env.ME_QR_API_TOKEN?.trim();
   const genQrKey = process.env.GENQRCODE_API_KEY?.trim();
-  const cached = qrResultCache.get(targetUrl);
+  const posterTitle = title.slice(0, 160) || "สื่อประชาสัมพันธ์";
+  const cacheKey = `${targetUrl}\n${posterTitle}`;
+  const cached = qrResultCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return jsonResponse(
       { imageUrl: cached.imageUrl, targetUrl, provider: cached.provider },
@@ -161,8 +163,8 @@ export async function POST(request: Request) {
       provider = "local";
     }
 
-    const posterImageUrl = buildQrPoster(imageUrl);
-    qrResultCache.set(targetUrl, {
+    const posterImageUrl = buildQrPoster(imageUrl, posterTitle);
+    qrResultCache.set(cacheKey, {
       imageUrl: posterImageUrl,
       provider,
       expiresAt: Date.now() + QR_CACHE_TTL_MS,

@@ -857,7 +857,7 @@ export function MediaGallery() {
   }
 
   async function showQrCode(item: MediaItem, slideIndex: number) {
-    const cacheKey = `${item.id}:${slideIndex}`;
+    const cacheKey = `${item.id}:${slideIndex}:${item.title}`;
     const cached = qrCache.current.get(cacheKey);
     if (cached) {
       setQrPanel({ ...cached, loading: false, error: "", slideIndex });
@@ -865,7 +865,7 @@ export function MediaGallery() {
     }
 
     try {
-      const stored = window.localStorage.getItem(`satun-risk-qr:v2:${cacheKey}`);
+      const stored = window.localStorage.getItem(`satun-risk-qr:v3:${cacheKey}`);
       if (stored) {
         const parsed = JSON.parse(stored) as {
           imageUrl?: string;
@@ -907,7 +907,7 @@ export function MediaGallery() {
       qrCache.current.set(cacheKey, qrResult);
       try {
         window.localStorage.setItem(
-          `satun-risk-qr:v2:${cacheKey}`,
+          `satun-risk-qr:v3:${cacheKey}`,
           JSON.stringify({ ...qrResult, cachedAt: Date.now() }),
         );
       } catch {
