@@ -127,6 +127,7 @@ test("includes responsive media management, Kanit, system skeletons, and existin
   assert.match(gallery, /\/api\/qr/);
   assert.match(gallery, /searchParams\.get\("slide"\)/);
   assert.match(gallery, /className="qr-modal"/);
+  assert.match(gallery, /satun-risk-qr:v2:/);
   assert.match(mediaCache, /MEDIA_CACHE_MAX_AGE_MS = 10 \* 60 \* 1000/);
   assert.match(mediaCache, /window\.localStorage\.getItem/);
   assert.match(mediaCache, /response\.source === "google"/);

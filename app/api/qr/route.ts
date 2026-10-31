@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 import {
   buildMediaDeepLink,
   buildMeQrPayload,
+  buildQrPoster,
   extractQrImage,
   normalizeSlideIndex,
 } from "../../lib/qr-code.ts";
@@ -91,14 +92,14 @@ async function createLocalBrandedQr(targetUrl: string) {
       type: "svg",
       errorCorrectionLevel: "H",
       margin: 3,
-      color: { dark: "#006837", light: "#ffffff" },
+      color: { dark: "#000000", light: "#ffffff" },
     }),
-    readFile(path.join(process.cwd(), "app", "apple-icon.png")),
+    readFile(path.join(process.cwd(), "public", "ssj-satun-logo.png")),
   ]);
   const logoData = `data:image/png;base64,${logo.toString("base64")}`;
   const overlay = [
     '<rect x="37%" y="37%" width="26%" height="26%" rx="4%" fill="#ffffff"/>',
-    `<image href="${logoData}" x="40%" y="40%" width="20%" height="20%" preserveAspectRatio="xMidYMid meet"/>`,
+    `<image href="${logoData}" x="40%" y="40%" width="20%" height="20%" preserveAspectRatio="xMidYMid slice"/>`,
   ].join("");
   const brandedSvg = svg.replace("</svg>", `${overlay}</svg>`);
   return `data:image/svg+xml;base64,${Buffer.from(brandedSvg).toString("base64")}`;
@@ -117,7 +118,7 @@ export async function POST(request: Request) {
   const configuredOrigin = process.env.NEXT_PUBLIC_SITE_URL?.trim();
   const origin = configuredOrigin || new URL(request.url).origin;
   const targetUrl = buildMediaDeepLink(origin, mediaId, slideIndex);
-  const logoUrl = new URL("/satun-risk-logo.png", origin).toString();
+  const logoUrl = new URL("/ssj-satun-logo.png", origin).toString();
   const meQrToken = process.env.ME_QR_API_TOKEN?.trim();
   const genQrKey = process.env.GENQRCODE_API_KEY?.trim();
   const cached = qrResultCache.get(targetUrl);
@@ -160,14 +161,15 @@ export async function POST(request: Request) {
       provider = "local";
     }
 
+    const posterImageUrl = buildQrPoster(imageUrl);
     qrResultCache.set(targetUrl, {
-      imageUrl,
+      imageUrl: posterImageUrl,
       provider,
       expiresAt: Date.now() + QR_CACHE_TTL_MS,
     });
 
     return jsonResponse(
-      { imageUrl, targetUrl, provider },
+      { imageUrl: posterImageUrl, targetUrl, provider },
       { headers: { "Cache-Control": "private, no-store" } },
     );
   } catch {

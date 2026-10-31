@@ -24,7 +24,10 @@ test("QR route keeps provider credentials server-side and returns an image", asy
     const json = await response.json();
 
     assert.equal(response.status, 200);
-    assert.equal(json.imageUrl, "https://cdn.example/qr.png");
+    assert.match(json.imageUrl, /^data:image\/svg\+xml;base64,/);
+    const posterSvg = Buffer.from(json.imageUrl.split(",")[1], "base64").toString("utf8");
+    assert.match(posterSvg, /กลุ่มภารกิจสื่อสารความเสี่ยง/);
+    assert.match(posterSvg, /สำนักงานสาธารณสุขจังหวัดสตูล/);
     assert.equal(json.targetUrl, "https://riskcom-stn.vercel.app/?media=abc&slide=2");
     assert.equal(providerRequest.input, "https://me-qr.com/api/v2/qr/link/create");
     assert.equal(providerRequest.init.headers["X-AUTH-TOKEN"], "server-only-test-token");

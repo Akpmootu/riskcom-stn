@@ -865,7 +865,7 @@ export function MediaGallery() {
     }
 
     try {
-      const stored = window.localStorage.getItem(`satun-risk-qr:${cacheKey}`);
+      const stored = window.localStorage.getItem(`satun-risk-qr:v2:${cacheKey}`);
       if (stored) {
         const parsed = JSON.parse(stored) as {
           imageUrl?: string;
@@ -907,7 +907,7 @@ export function MediaGallery() {
       qrCache.current.set(cacheKey, qrResult);
       try {
         window.localStorage.setItem(
-          `satun-risk-qr:${cacheKey}`,
+          `satun-risk-qr:v2:${cacheKey}`,
           JSON.stringify({ ...qrResult, cachedAt: Date.now() }),
         );
       } catch {
@@ -1923,7 +1923,7 @@ export function MediaGallery() {
               <X size={20} />
             </button>
             <div className="qr-modal-brand">
-              <img src="/satun-risk-logo.png" alt="ตราสำนักงานสาธารณสุขจังหวัดสตูล" />
+              <img src="/ssj-satun-logo.png" alt="ตราสำนักงานสาธารณสุขจังหวัดสตูล" />
               <span><strong>QR Code สื่อสุขภาพ</strong><small>สำนักงานสาธารณสุขจังหวัดสตูล</small></span>
             </div>
             <div className="qr-preview" aria-live="polite" aria-busy={qrPanel.loading}>
